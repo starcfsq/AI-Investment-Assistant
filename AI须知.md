@@ -105,7 +105,7 @@ cp .env.example .env   # 然后编辑 .env
 
 `core/config.py` 在 import 时会自动 `load_dotenv()`，无需手动加载。可用环境变量：
 - `DEEPSEEK_API_KEY`：DeepSeek 密钥（必填，否则 `get_client()` 抛 `ValueError`；测试时用 `test` 占位即可）
-- `DEEPSEEK_MODEL`：**文档里声明了，但当前代码并未读取**（见 §7 坑）
+- `DEEPSEEK_MODEL`：DeepSeek 模型名，默认 `deepseek-chat`（`get_client()` 会读取）
 - `ACCOUNT_INITIAL_CAPITAL`：虚拟账户初始资金，默认 1000000
 
 **启动**：
@@ -153,7 +153,7 @@ DEEPSEEK_API_KEY=test .venv/Scripts/python.exe -m pytest -v
 
 **④ 换 LLM 模型 / 供应商**
 - 供应商：`ai/provider.py::get_client()` 返回 `DeepSeekClient`，切换供应商就是换这里的实现（实现 `LLMClient` 抽象即可，接口只有 `chat_json(messages, schema)`）。
-- 模型名：**改 `ai/deepseek.py` 的 `DEFAULT_MODEL`（当前 `deepseek-chat`），或给 `DeepSeekClient(..., model=...)` 显式传参**。注意：`.env` 里的 `DEEPSEEK_MODEL` 目前**没有被代码读取**（见 §7）。
+- 模型名：在 `.env` 里设 `DEEPSEEK_MODEL`（`get_client()` 已读取，默认 `deepseek-chat`），或改 `ai/deepseek.py` 的 `DEFAULT_MODEL`。
 
 **⑤ 前端改动**
 - `web/app.js` 无构建、无框架，原生 JS + `fetch`。改完刷新浏览器即可。接口契约见 §3 的 API 表。
@@ -172,7 +172,7 @@ DEEPSEEK_API_KEY=test .venv/Scripts/python.exe -m pytest -v
 5. **RAG 索引只保留最近一次查询的标的**：`core/rag.py::build_index()` 开头调用 `store.clear_chunks()` 清空旧块再写入——它只保存**最近查询的那个 symbol** 的新闻/公告。这是简化设计，不是 bug。若要支持多标的并行检索需改造存储结构。
 6. **Windows Git Bash 里 curl 内联中文 JSON 会 400**：`curl -X POST ... -d '{"query":"最近半导体板块发生了什么"}'` 在 Git Bash 下常返回 `400 {"detail":"There was an error parsing the body"}`，是 shell 编码问题不是服务 bug。**改用 `curl --data @body.json`（JSON 存文件）或 Python/HTTP 客户端**。
 7. **portfolio 卫星项 `name` 是可交易 ETF 字符串**（含 6 位代码），如 `"半导体ETF(512480)"`，来自 `core/portfolio.py` 的 `ETF_MAP`。虚拟账户用它解析出 6 位 symbol 去取价、下单（Task 7 契约）。**别把 `name` 改成纯中文板块名**，否则账户无法取价/下单。
-8. **`DEEPSEEK_MODEL` 声明了但没接线**：`.env.example` 有该变量，但 `ai/provider.py::get_client()` 只传 `api_key`，模型名实际用的是 `ai/deepseek.py` 的 `DEFAULT_MODEL`。想用 `DEEPSEEK_MODEL` 需要改 `get_client()` 传入 `model=get_env("DEEPSEEK_MODEL")`（改动小、风险低，可作为首个练手任务，但要补/改测试）。
+8. **`DEEPSEEK_MODEL` 已接线**：`.env` 里设 `DEEPSEEK_MODEL` 即可换模型（默认 `deepseek-chat`）；`DeepSeekClient` 对 HTTP 错误或非 JSON 输出会重试一次再抛错（调用方 `_safe` 兜底降级）。
 9. **改动影响判定**：任何改动上线前先确认不违背 §2 的四条核心原则；改 `core/` 数学逻辑后跑全量测试，改 `ai/` 提示词/Schema 后至少跑 `test_deepseek.py` 与 `test_e2e.py`。
 10. **提交前跑全量测试**（§5），不要只跑自己改的用例。
 

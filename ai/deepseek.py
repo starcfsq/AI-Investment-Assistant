@@ -31,17 +31,23 @@ class DeepSeekClient(LLMClient):
             "response_format": {"type": "json_object"},
             "temperature": 0.3,
         }
+        last_error = None
         for attempt in range(2):
-            resp = self._session.post(API_URL, headers=self._session.headers, json=payload, timeout=60)
-            resp.raise_for_status()
-            content = resp.json()["choices"][0]["message"]["content"]
             try:
+                resp = self._session.post(API_URL, headers=self._session.headers,
+                                          json=payload, timeout=60)
+                resp.raise_for_status()
+                content = resp.json()["choices"][0]["message"]["content"]
                 data = json.loads(content)
+                if not isinstance(data, dict):
+                    raise ValueError("返回内容不是 JSON 对象")
                 _validate(data, schema)
                 return data
-            except (json.JSONDecodeError, ValueError) as exc:
-                logger.warning("DeepSeek 输出不符合 schema（第 %d 次）: %s", attempt + 1, exc)
-        raise ValueError("DeepSeek 输出两次均不符合 schema")
+            except (requests.RequestException, KeyError,
+                    json.JSONDecodeError, ValueError) as exc:
+                last_error = exc
+                logger.warning("DeepSeek 调用/输出异常（第 %d 次）: %s", attempt + 1, exc)
+        raise ValueError(f"DeepSeek 两次调用均失败: {last_error}")
 
 
 def _validate(data, schema: dict) -> None:

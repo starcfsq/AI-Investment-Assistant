@@ -18,4 +18,7 @@ def get_client() -> LLMClient:
         return MockLLMClient()
     from ai.deepseek import DeepSeekClient
 
-    return DeepSeekClient(api_key=get_env("DEEPSEEK_API_KEY"))
+    return DeepSeekClient(
+        api_key=get_env("DEEPSEEK_API_KEY"),
+        model=get_env("DEEPSEEK_MODEL", "deepseek-chat"),
+    )
