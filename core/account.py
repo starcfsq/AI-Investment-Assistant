@@ -142,6 +142,7 @@ class SimAccount:
             "period_id": period_id,
             "nav": round(nav, 2),
             "cash": round(acc["cash"], 2),
+            "holdings_value": round(nav - acc["cash"], 2),
             "initial_capital": init,
             "win_rate": round(win_rate, 3),
             "return_pct": round((nav / init - 1.0) * 100.0, 2) if init else 0.0,

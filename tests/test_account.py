@@ -43,6 +43,8 @@ def test_win_rate_after_profit_sell():
     acc.execute({"core": None, "satellite": []}, up)
     stats = acc.period_stats()
     assert stats["win_rate"] == 1.0
+    assert stats["return_pct"] > 9.0   # +10% sell after fees ≈ 9.93%
+    assert stats["cash"] > 100000.0    # sell proceeds credited to cash
 
 
 def test_reset_period_archives():
