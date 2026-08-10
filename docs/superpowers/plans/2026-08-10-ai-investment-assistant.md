@@ -916,6 +916,8 @@ def _empty_like(key: str) -> Any:
                        "sector_flow", "sector_hist", "stock_spot", "stock_hist",
                        "bond_yield")):
         return pd.DataFrame()
+    if key.startswith("stock_financial"):
+        return {}
     return []
 ```
 
