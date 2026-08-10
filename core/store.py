@@ -10,10 +10,19 @@ class Store:
 
     def __init__(self, db_path: Path | str):
         self.db_path = str(db_path)
-        Path(self.db_path).parent.mkdir(parents=True, exist_ok=True)
+        self._mem_conn: sqlite3.Connection | None = None
+        if self.db_path == ":memory:":
+            # SQLite 的内存库只存在于其连接生命周期内；每次新建连接都会得到一个
+            # 全新空库，导致 schema 丢失。因此对 :memory: 保持单一持久连接。
+            self._mem_conn = sqlite3.connect(":memory:")
+            self._mem_conn.row_factory = sqlite3.Row
+        else:
+            Path(self.db_path).parent.mkdir(parents=True, exist_ok=True)
         self._init_schema()
 
     def _conn(self) -> sqlite3.Connection:
+        if self._mem_conn is not None:
+            return self._mem_conn
         conn = sqlite3.connect(self.db_path)
         conn.row_factory = sqlite3.Row
         return conn
