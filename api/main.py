@@ -3,6 +3,7 @@ from datetime import datetime
 
 from fastapi import FastAPI
 from fastapi.responses import FileResponse, JSONResponse
+from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
 from ai.chat import answer_question
@@ -120,6 +121,9 @@ def account():
 @app.get("/")
 def index():
     return FileResponse("web/index.html")
+
+
+app.mount("/web", StaticFiles(directory="web"), name="web")
 
 
 def _prices_for_portfolio(portfolio: dict) -> dict[str, float]:
