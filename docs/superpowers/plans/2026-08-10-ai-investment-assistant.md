@@ -3351,6 +3351,7 @@ async function refreshDashboard() {
   const d = await getJSON("/api/dashboard");
   document.getElementById("data-until").textContent = "数据截至 " + d.data_until;
   const warns = (d.analysis.warnings || []);
+  document.querySelectorAll(".warnings").forEach(el => el.remove());
   const warnsHtml = warns.length
     ? `<div class="warnings">⚠️ ${warns.map(w => `<span>${w}</span>`).join("　")}</div>` : "";
   document.querySelector("header").insertAdjacentHTML("afterend", warnsHtml);
@@ -3376,9 +3377,20 @@ async function refreshDashboard() {
       ["组合", "名称", "权重"],
       (p.core ? [["核心", p.core.name, p.core.weight]] : [])
         .concat((p.satellite || []).map(s => ["卫星", s.name, s.weight])));
+  // 投资账户：显示账户统计
   document.getElementById("account").innerHTML = table(
+    ["阶段", "净值", "现金", "持仓市值", "胜率", "收益率"],
+    [[a.period_id, a.nav, a.cash, a.holdings_value,
+      a.win_rate, (a.return_pct ?? 0) + "%"]]);
+  // 阶段历史：显示归档阶段
+  document.getElementById("periods").innerHTML = table(
     ["阶段", "胜率", "收益率", "基准"],
     (d.periods || []).map(p => [p.period_id, p.win_rate, p.return_pct + "%", p.benchmark_return]));
+  // 市场趋势：显示信号明细
+  document.getElementById("trend").innerHTML = t.state
+    ? table(["状态", "MA偏离", "PE百分位", "股债性价比", "综合分"],
+        [[t.state, t.detail?.ma_dev, t.detail?.pe_pct, t.detail?.bond_equity_pct, t.composite]])
+    : "<p>暂无趋势数据</p>";
 }
 
 async function runAnalyze() {
