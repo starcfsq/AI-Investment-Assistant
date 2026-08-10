@@ -1378,6 +1378,8 @@ git commit -m "feat: add stock multi-factor scoring"
 
 `tests/test_portfolio.py`:
 ```python
+import pytest
+
 from core.portfolio import build_portfolio
 
 SECTORS = [
@@ -1402,7 +1404,7 @@ def test_satellite_weight_proportional_to_score():
     assert p["satellite"][0]["weight"] > p["satellite"][2]["weight"]
 ```
 
-（`test_portfolio.py` 顶部需 `import pytest`。）
+（pytest 断言已含 `import pytest`。）
 
 - [ ] **Step 2: 运行测试确认失败**
 
