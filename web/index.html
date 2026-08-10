@@ -1,0 +1,52 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <title>AI 智能投资助手</title>
+  <link rel="stylesheet" href="/web/style.css" />
+</head>
+<body>
+  <header>
+    <h1>AI 智能投资助手 <span id="data-until"></span></h1>
+    <div class="actions">
+      <button id="btn-analyze">重新分析</button>
+      <button id="btn-backtest">运行回测迭代</button>
+    </div>
+  </header>
+
+  <section id="cards"></section>
+
+  <main>
+    <section class="panel">
+      <h2>市场趋势</h2>
+      <div id="trend"></div>
+      <h2>板块排名</h2>
+      <table id="sectors"></table>
+      <h2>标的推荐</h2>
+      <table id="stocks"></table>
+      <h2>组合配置</h2>
+      <div id="portfolio"></div>
+    </section>
+
+    <section class="panel">
+      <h2>回测与迭代</h2>
+      <div id="backtest"></div>
+      <h2>投资账户</h2>
+      <div id="account"></div>
+      <h2>阶段历史</h2>
+      <table id="periods"></table>
+    </section>
+  </main>
+
+  <section class="chat">
+    <div id="messages"></div>
+    <div class="chat-input">
+      <input id="query" placeholder="输入问题，如：最近半导体板块发生了什么？" />
+      <button id="btn-send">发送</button>
+    </div>
+  </section>
+
+  <footer>本工具为数据分析演示，不构成投资建议。</footer>
+  <script src="/web/app.js"></script>
+</body>
+</html>

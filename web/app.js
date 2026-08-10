@@ -1,0 +1,96 @@
+async function getJSON(url, options) {
+  const resp = await fetch(url, options);
+  if (!resp.ok) throw new Error(url + " -> " + resp.status);
+  return resp.json();
+}
+
+function card(label, value, extra) {
+  return `<div class="card"><div class="label">${label}</div>` +
+         `<div class="value">${value ?? "—"}</div>${extra ? `<div class="label">${extra}</div>` : ""}</div>`;
+}
+
+function table(headers, rows) {
+  if (!rows || rows.length === 0) return "<p>暂无数据</p>";
+  const h = headers.map(x => `<th>${x}</th>`).join("");
+  const body = rows.map(r => `<tr>${r.map(c => `<td>${c ?? ""}</td>`).join("")}</tr>`).join("");
+  return `<table><thead><tr>${h}</tr></thead><tbody>${body}</tbody></table>`;
+}
+
+async function refreshDashboard() {
+  const d = await getJSON("/api/dashboard");
+  document.getElementById("data-until").textContent = "数据截至 " + d.data_until;
+  const warns = (d.analysis.warnings || []);
+  const warnsHtml = warns.length
+    ? `<div class="warnings">⚠️ ${warns.map(w => `<span>${w}</span>`).join("　")}</div>` : "";
+  document.querySelector("header").insertAdjacentHTML("afterend", warnsHtml);
+  const t = d.analysis.trend || {};
+  const a = d.account || {};
+  const cards = [
+    card("趋势状态", t.state, "综合分 " + (t.composite ?? "—")),
+    card("账户净值", "¥" + (a.nav ?? 0).toLocaleString(), "阶段 " + a.period_id),
+    card("阶段收益率", (a.return_pct ?? 0) + "%"),
+    card("操作胜率", Math.round((a.win_rate ?? 0) * 100) + "%"),
+  ];
+  document.getElementById("cards").innerHTML = cards.join("");
+
+  document.getElementById("sectors").innerHTML = table(
+    ["板块", "RS", "资金流", "动量", "得分"],
+    (d.analysis.sectors || []).map(s => [s.name, s.rs, s.flow, s.momentum, s.score]));
+  document.getElementById("stocks").innerHTML = table(
+    ["代码", "名称", "得分"],
+    (d.analysis.stocks || []).map(s => [s.code, s.name, s.score]));
+  const p = d.analysis.portfolio || {};
+  document.getElementById("portfolio").innerHTML =
+    `<p>${p.summary || ""}　${p.rebalance_rule || ""}</p>` + table(
+      ["组合", "名称", "权重"],
+      (p.core ? [["核心", p.core.name, p.core.weight]] : [])
+        .concat((p.satellite || []).map(s => ["卫星", s.name, s.weight])));
+  document.getElementById("account").innerHTML = table(
+    ["阶段", "胜率", "收益率", "基准"],
+    (d.periods || []).map(p => [p.period_id, p.win_rate, p.return_pct + "%", p.benchmark_return]));
+}
+
+async function runAnalyze() {
+  const d = await getJSON("/api/analyze", { method: "POST" });
+  pushMsg("assistant", "分析完成：" + (d.ai.trend?.state || d.analysis.trend?.state || ""));
+  refreshDashboard();
+}
+
+async function runBacktest() {
+  const d = await getJSON("/api/backtest");
+  const r = d.result || {};
+  const body = table(["状态", "版本", "胜率"],
+    [[r.status, r.version, r.new_win_rate ?? r.win_rate ?? ""]]);
+  document.getElementById("backtest").innerHTML =
+    body + table(["版本", "运行时间", "胜率", "超额收益"],
+      (d.iters || []).map(i => [i.version, i.run_at, i.win_rate, i.excess_return]));
+}
+
+async function send() {
+  const q = document.getElementById("query").value.trim();
+  if (!q) return;
+  pushMsg("user", q);
+  document.getElementById("query").value = "";
+  const d = await getJSON("/api/chat", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ query: q }),
+  });
+  const refs = (d.references || []).map(r =>
+    `<div class="ref">· ${r.title}（${r.date}，${r.source}）</div>`).join("");
+  pushMsg("assistant", d.answer + ` <small>置信度 ${d.confidence}</small>` + refs);
+}
+
+function pushMsg(role, text) {
+  const box = document.getElementById("messages");
+  box.insertAdjacentHTML("beforeend",
+    `<div class="msg ${role}">${text.replace(/\n/g, "<br>")}</div>`);
+  box.scrollTop = box.scrollHeight;
+}
+
+document.getElementById("btn-analyze").addEventListener("click", runAnalyze);
+document.getElementById("btn-backtest").addEventListener("click", runBacktest);
+document.getElementById("btn-send").addEventListener("click", send);
+document.getElementById("query").addEventListener("keydown", e => { if (e.key === "Enter") send(); });
+
+refreshDashboard();
