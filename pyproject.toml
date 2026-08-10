@@ -1,0 +1,9 @@
+[project]
+name = "ai-investment-assistant"
+version = "0.1.0"
+description = "A股长期投资智能助手：趋势/板块/选股/组合分析 + RAG + 回测迭代 + 虚拟账户"
+requires-python = ">=3.11"
+dependencies = []
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

@@ -1,0 +1,5 @@
+{
+  "trend": {"ma": 0.3, "valuation": 0.4, "bond": 0.3},
+  "sector": {"rs": 0.4, "flow": 0.3, "momentum": 0.3},
+  "stock": {"roe": 0.3, "growth": 0.25, "valuation": 0.25, "dividend": 0.2}
+}
