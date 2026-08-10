@@ -26,8 +26,7 @@ def build_portfolio(sector_scores: list[dict], core_ratio: float = 0.7,
     for s in top:
         weight = round((s["score"] / total) * (1.0 - core_ratio), 4)
         etf = ETF_MAP.get(s["name"], f"{s['name']}ETF")
-        # name 保留板块名；etf 为映射到的具体 ETF（含代码）
-        satellite.append({"name": s["name"], "etf": etf, "weight": weight})
+        satellite.append({"name": etf, "weight": weight})
     return {
         "core": {"name": "沪深300ETF(510300)", "weight": core_ratio,
                  "note": "宽基核心"},

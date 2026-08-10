@@ -20,5 +20,5 @@ def test_core_ratio_and_satellite_sum():
 
 def test_satellite_weight_proportional_to_score():
     p = build_portfolio(SECTORS, core_ratio=0.7, top_n=3)
-    assert p["satellite"][0]["name"] == "半导体"
+    assert p["satellite"][0]["name"] == "半导体ETF(512480)"
     assert p["satellite"][0]["weight"] > p["satellite"][2]["weight"]
