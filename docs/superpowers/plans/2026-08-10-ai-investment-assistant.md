@@ -3449,6 +3449,88 @@ git push -u origin main
 - [ ] DeepSeek 解读：`curl -X POST http://127.0.0.1:8000/api/analyze` 返回含 `ai` 字段
 - [ ] 免责声明在所有 AI 输出中可见
 
+### Task 19: AI须知.md —— 新 AI 上手文档
+
+**Files:**
+- Create: `AI须知.md`（项目主目录）
+
+**目的：** 所有功能实现完善之后，在主目录新增 `AI须知.md`。让一个新上下文、从未接触过本项目的 AI（或新开发者）仅阅读该文件即可：
+1. 快速理解项目是什么、核心设计原则
+2. 知道代码在哪儿、每部分职责
+3. 知道如何启动、测试、验证改动
+4. 知道如何安全地优化或迭代本项目（哪些不能改、哪些坑要避开）
+
+**文档必须包含的章节（要求绝对具体、可操作）：**
+
+- [ ] **Step 1: 写 AI须知.md**
+
+内容要求（参考，可在此基础上扩充）：
+
+```markdown
+# AI 须知（Project Onboarding for AI Agents）
+
+> 给新上下文 AI 的快速上手文档。阅读本文件后，你应当能理解、启动、测试并安全地修改本项目。
+
+## 1. 项目是什么
+
+一句话定位 + 核心功能列表（趋势分析/板块/选股/组合/RAG/回测迭代/虚拟账户）。
+
+## 2. 核心设计原则（改动时不可违背）
+
+1. **数据永不来自 LLM**：所有数字由 core/ 确定性引擎从 akshare 真实数据计算，
+   ai/ 层只做解读，禁止生成数字。改动不得让 LLM 编造数据。
+2. **AI 是增强层，不是依赖层**：DeepSeek 挂了，看板和确定性分析必须照常工作。
+3. **指标口径统一**：胜率=已平仓盈利/已平仓；阶段收益率=(期末-期初)/期初；
+   基准=沪深300。
+4. **免责声明**：所有 AI 输出带 disclaimer 与 confidence。
+
+## 3. 项目结构速览
+
+（核心目录/模块 → 一句话职责 → 入口文件/函数）
+
+## 4. 环境与启动
+
+- 依赖：`pip install -r requirements.txt`（sentence-transformers/chromadb 可暂缺，RAG 会 Hash 降级）
+- 配置：复制 `.env.example` 为 `.env`，填 `DEEPSEEK_API_KEY`
+- 启动：`python -m uvicorn api.main:app --port 8000`
+- 打开：`http://127.0.0.1:8000/`
+
+## 5. 测试
+
+- 全部测试：`python -m pytest -v`
+- 数据层测试不依赖真实网络（mock/降级）
+- 新增功能必须补测试
+
+## 6. 常见改动场景与步骤
+
+- 修改打分权重：`config/weights.json`（或用回测迭代自动调优）
+- 新增分析指标：改 core/xxx.py → 补测试 → 在 ai/interpret 提示词中说明
+- 换 LLM 模型：改 `ai/provider.py` 的 get_client，模型名在 `.env` 的 DEEPSEEK_MODEL
+
+## 7. 常见坑与注意
+
+- akshare 接口名随版本变化：先用 `dir(ak)` 确认，别硬编码已废弃的接口
+- `.env` 不入库；`data/` 不入库
+- 回测/账户数据在 SQLite `data/app.db`，删除即重置
+- 前端无构建工具，改 `web/app.js` 后刷新即可
+- 提交前跑全量测试
+```
+
+- [ ] **Step 2: 校验文档可读性**
+
+通读一遍，确认以下问题都可从文中直接找到答案：
+- 项目是做什么的？核心原则有哪些？
+- 怎么安装依赖、配置、启动、测试？
+- 想加一个分析指标，改哪几个文件？
+- 哪些东西绝不能乱改？
+
+- [ ] **Step 3: Commit**
+
+```bash
+git add AI须知.md
+git commit -m "docs: add AI onboarding guide for future agents"
+```
+
 ---
 
 ## Self-Review 记录
