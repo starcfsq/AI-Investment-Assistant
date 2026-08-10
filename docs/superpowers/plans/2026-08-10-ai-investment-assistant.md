@@ -2543,11 +2543,15 @@ def run_iteration(provider, store) -> dict:
     sector_hist, bench = _collect_history(provider)
     if not sector_hist:
         return {"status": "no_data", "reason": "板块历史数据不足"}
+    if bench is None or len(bench) < 60:
+        return {"status": "no_data", "reason": "基准数据不足"}
 
     # 按时间排序，前 60% 调参，后 40% 验证
     sorted_hist, sorted_bench = _split_train_test(sector_hist, bench, 0.6)
     train_hist, test_hist = sorted_hist
     train_bench, test_bench = sorted_bench
+    if not train_hist:
+        return {"status": "no_data", "reason": "训练窗口数据不足"}
 
     def train_score(_, w):
         return backtest_sectors(train_hist, train_bench, w)

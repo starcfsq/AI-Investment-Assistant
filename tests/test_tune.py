@@ -17,3 +17,23 @@ def test_grid_search_finds_best():
     )
     assert best_weights["sector"]["rs"] == 0.9
     assert best_score == pytest.approx(0.9)
+
+
+def test_run_iteration_no_data_when_bench_missing(monkeypatch):
+    from core.tune import run_iteration
+
+    class FakeProvider:
+        def sector_quote(self):
+            import pandas as pd
+            return pd.DataFrame({"name": ["A", "B"]})
+        def sector_hist(self, name):
+            import pandas as pd
+            return pd.DataFrame()
+        def index_daily(self, code):
+            return None
+        def benchmark_index_code(self):
+            return "sh000300"
+
+    store = None
+    result = run_iteration(FakeProvider(), store)
+    assert result["status"] == "no_data"
