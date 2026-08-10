@@ -606,10 +606,14 @@ git commit -m "feat: add SQLite storage layer"
   - `stock_news(code: str) -> list[dict]`
   - `stock_notices(code: str) -> list[dict]`
   - `benchmark_index_code() -> str`  # "沪深300" 对应代码 "sh000300"
+  - `quality_report() -> list[dict]`  # 各数据源 {source, status, fetched_at, data_until, ttl_seconds}
 
-**设计要点：**
+**设计要点（实时性 / 有效性 / 充分性，见设计文档 §6.1.1）：**
 - 每个方法用 `_cached(key, ttl, fetch)` 包装：命中缓存直接返回，否则调用 akshare 并缓存 JSON。
 - 所有 akshare 调用包 try/except：异常时重试一次；仍失败且无缓存则返回空 DataFrame / 空列表（由上层降级）。
+- **实时性**：每次抓取记录 `fetched_at` 与 `data_until`（数据截止日）；缓存命中标记 `status=cached`。`quality_report()` 汇总供看板展示。
+- **有效性**：抓取结果过 `_validate_df`——close/price 必须 >0，pct_change 在 ±50%，PE 在 0~500，PB 在 0~100，按日期去重升序。
+- **充分性**：单条坏数据剔除不致命；数据量不足由分析模块（Task 4-8）标注告警。
 
 - [ ] **Step 1: 实现数据层**
 
@@ -639,24 +643,44 @@ _INDEX_CODES = {
 class DataProvider:
     def __init__(self, store: Store | None = None):
         self.store = store or Store(":memory:")
+        self._freshness: dict[str, dict] = {}
+
+    def _record_freshness(self, key: str, status: str,
+                          data_until: str | None, ttl: int) -> None:
+        self._freshness[key] = {
+            "source": key, "status": status,
+            "fetched_at": _now(), "data_until": data_until or "",
+            "ttl_seconds": ttl,
+        }
+
+    def quality_report(self) -> list[dict]:
+        """返回各数据源的新鲜度/状态汇总，供看板与 AI 展示。"""
+        return [dict(v) for v in self._freshness.values()]
 
     # ---- 通用缓存 ----
     def _cached(self, key: str, ttl: int, fetch: Callable[[], Any]) -> Any:
         if self.store:
             raw = self.store.cache_get(key)
             if raw is not None:
-                return _from_json(raw)
+                cached_data = _from_json(raw)
+                self._record_freshness(key, "cached", _data_until(cached_data), ttl)
+                return cached_data
+        status = "ok"
         try:
             data = fetch()
         except Exception as exc:  # noqa: BLE001
             logger.warning("akshare 调用失败 %s: %s，重试一次", key, exc)
             try:
                 data = fetch()
+                status = "ok_retry"
             except Exception as exc2:  # noqa: BLE001
                 logger.error("akshare 重试仍失败 %s: %s", key, exc2)
+                self._record_freshness(key, "missing", None, ttl)
                 return _empty_like(key)
+        data = _validate_df(data, key)
         if self.store and data is not None:
             self.store.cache_set(key, _to_json(data), ttl)
+        self._record_freshness(key, status, _data_until(data), ttl)
         return data
 
     # ---- 指数 ----
@@ -830,6 +854,45 @@ def _num(v: Any) -> float:
         return float(v)
     except (TypeError, ValueError):
         return 0.0
+
+
+def _validate_df(data: Any, key: str) -> Any:
+    """数据有效性校验：剔除坏值，按日期去重升序。单条坏数据不影响整体。"""
+    if not isinstance(data, pd.DataFrame) or data.empty:
+        return data
+    try:
+        if "close" in data.columns:
+            data = data[data["close"] > 0]
+        if "price" in data.columns:
+            data = data[data["price"] > 0]
+        if "pct_change" in data.columns:
+            data = data[data["pct_change"].abs() <= 50]
+        if "pe" in data.columns:
+            data = data[(data["pe"] > 0) & (data["pe"] < 500)]
+        if "pb" in data.columns:
+            data = data[(data["pb"] > 0) & (data["pb"] < 100)]
+        subset = [c for c in ("date", "close", "price", "pe", "pb")
+                  if c in data.columns]
+        if subset:
+            data = data.dropna(subset=subset)
+        if "date" in data.columns:
+            data = data.sort_values("date").drop_duplicates(subset=["date"])
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("数据校验失败 %s: %s", key, exc)
+    return data
+
+
+def _data_until(data: Any) -> str | None:
+    """从数据里推断内容截止日期（实时性指标之一）。"""
+    if isinstance(data, pd.DataFrame) and "date" in data.columns and not data.empty:
+        return str(data["date"].iloc[-1])[:10]
+    if isinstance(data, list) and data and isinstance(data[0], dict):
+        return str(data[0].get("date", ""))[:10]
+    return None
+
+
+def _now() -> str:
+    return datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
 
 def _to_json(obj: Any) -> str:
@@ -1480,9 +1543,17 @@ git commit -m "feat: add portfolio construction"
     "sectors": [ {name, rs, flow, momentum, score}, ...],
     "stocks": [ {code, name, score}, ...],
     "portfolio": {...},
-    "data_until": "..."
+    "data_until": "...",
+    "data_quality": [ {source, status, fetched_at, data_until, ttl_seconds}, ...],
+    "warnings": [ "趋势数据不足：估值历史少于5年", ...]
   }
   ```
+
+**充分性告警规则（写进实现）：**
+- 指数历史 < 250 行 → `趋势数据不足：MA250 样本不足`
+- 估值历史 < 120 行 → `趋势数据不足：估值历史过短`
+- 板块数 < 10 → `板块覆盖不足`
+- 候选股票 < 5 → `选股候选不足`
 
 - [ ] **Step 1: 实现编排**
 
@@ -1504,6 +1575,7 @@ logger = get_logger("core.analyze")
 def run_analysis(provider) -> dict:
     weights = load_weights()
     trend = {}
+    index_df, val_df, quotes = None, None, None
     try:
         index_df = provider.index_daily("沪深300")
         val_df = provider.index_valuation("沪深300")
@@ -1552,6 +1624,7 @@ def run_analysis(provider) -> dict:
     portfolio = build_portfolio(sectors[:4]) if sectors else {}
 
     data_until = trend.get("data_until", datetime.now().strftime("%Y-%m-%d"))
+    warnings = _sufficiency_warnings(index_df, val_df, quotes, sectors, stocks)
     return {
         "generated_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
         "trend": trend,
@@ -1559,7 +1632,25 @@ def run_analysis(provider) -> dict:
         "stocks": stocks,
         "portfolio": portfolio,
         "data_until": data_until,
+        "data_quality": provider.quality_report(),
+        "warnings": warnings,
     }
+
+
+def _sufficiency_warnings(index_df, val_df, quotes, sectors, stocks) -> list[str]:
+    """数据充分性检查：不足时明确告警，而非静默出错。"""
+    warnings = []
+    if index_df is not None and len(index_df) < 250:
+        warnings.append("趋势数据不足：指数 MA250 样本不足")
+    if val_df is not None and len(val_df) < 120:
+        warnings.append("趋势数据不足：估值历史过短")
+    if quotes is not None and len(quotes) < 10:
+        warnings.append("板块覆盖不足")
+    if len(sectors) < 10:
+        warnings.append("板块打分样本不足")
+    if len(stocks) < 5:
+        warnings.append("选股候选不足")
+    return warnings
 ```
 
 - [ ] **Step 2: 冒烟测试（离线可用）**
@@ -3167,6 +3258,8 @@ header h1 { font-size: 20px; }
 #data-until { font-size: 12px; color: #9ca3af; margin-left: 12px; }
 .actions button { margin-left: 8px; padding: 8px 16px; border: none; border-radius: 6px;
                   cursor: pointer; background: #2563eb; color: #fff; }
+.warnings { margin: 0 24px; padding: 8px 16px; background: #fef3c7; color: #92400e;
+            border-radius: 6px; font-size: 13px; }
 #cards { display: flex; gap: 16px; padding: 16px 24px; flex-wrap: wrap; }
 .card { background: #fff; border-radius: 8px; padding: 16px 20px; flex: 1 1 200px;
         box-shadow: 0 1px 3px rgba(0,0,0,.1); }
@@ -3214,6 +3307,10 @@ function table(headers, rows) {
 async function refreshDashboard() {
   const d = await getJSON("/api/dashboard");
   document.getElementById("data-until").textContent = "数据截至 " + d.data_until;
+  const warns = (d.analysis.warnings || []);
+  const warnsHtml = warns.length
+    ? `<div class="warnings">⚠️ ${warns.map(w => `<span>${w}</span>`).join("　")}</div>` : "";
+  document.querySelector("header").insertAdjacentHTML("afterend", warnsHtml);
   const t = d.analysis.trend || {};
   const a = d.account || {};
   const cards = [
