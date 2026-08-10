@@ -55,13 +55,17 @@ def analyze_trend(index_df: pd.DataFrame, val_df: pd.DataFrame,
     dev = ma_deviation(last_close, ma_value)
     ma_signal = _clamp(dev * 500.0 + 50.0)
 
-    pe_pct = pct_rank_historical(_last_pe(val_df), val_df["pe"])
-    pb_pct = pct_rank_historical(_last_pb(val_df), val_df["pb"])
-    valuation_signal = 100.0 - pe_pct
+    pe_pct = pb_pct = 50.0
+    valuation_signal = 50.0
+    if not val_df.empty and "pe" in val_df.columns and "pb" in val_df.columns:
+        pe_pct = pct_rank_historical(_last_pe(val_df), val_df["pe"])
+        pb_pct = pct_rank_historical(_last_pb(val_df), val_df["pb"])
+        valuation_signal = 100.0 - pe_pct
 
     bond_signal = 50.0
     bond_pct = 50.0
-    if not bond_df.empty and not val_df.empty:
+    if (not bond_df.empty and not val_df.empty
+            and "pe" in val_df.columns and "cn_10y" in bond_df.columns):
         eq_earn = 1.0 / _last_pe(val_df) if _last_pe(val_df) > 0 else 0.0
         last_bond = float(bond_df["cn_10y"].iloc[-1]) / 100.0
         if last_bond > 0:

@@ -29,10 +29,11 @@ def run_analysis(provider) -> dict:
         quotes = provider.sector_quote()
         flow = provider.sector_flow()
         hist = {}
-        for name in list(quotes["name"])[:30]:
-            h = provider.sector_hist(name)
-            if not h.empty:
-                hist[name] = h
+        if not quotes.empty and "name" in quotes.columns:
+            for name in list(quotes["name"])[:30]:
+                h = provider.sector_hist(name)
+                if not h.empty:
+                    hist[name] = h
         bench = provider.index_daily(provider.benchmark_index_code())
         if not quotes.empty and not bench.empty:
             sectors = score_sectors(quotes, flow, hist, bench, weights)

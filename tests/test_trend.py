@@ -46,3 +46,11 @@ def test_trend_empty_index_safe():
 
     result = analyze_trend(pd.DataFrame(), pd.DataFrame(), pd.DataFrame(), WEIGHTS)
     assert result["state"] == "中性合理"
+
+
+def test_trend_empty_valuation_safe():
+    index = pd.DataFrame({"date": pd.date_range("2020-01-01", periods=250),
+                          "close": [100.0] * 250})
+    result = analyze_trend(index, pd.DataFrame(), pd.DataFrame(), WEIGHTS)
+    assert result["state"] == "中性合理"
+    assert result["signals"]["ma"] != 50.0 or result["detail"]["ma_dev"] is not None
