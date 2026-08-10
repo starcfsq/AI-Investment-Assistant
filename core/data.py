@@ -137,6 +137,18 @@ class DataProvider:
 
         return self._cached("stock_spot", 3600, fetch)
 
+    def etf_spot(self) -> pd.DataFrame:
+        import akshare as ak
+
+        def fetch():
+            df = ak.fund_etf_spot_em()
+            return df.rename(
+                columns={"代码": "code", "名称": "name",
+                         "最新价": "price"}
+            )[["code", "name", "price"]].copy()
+
+        return self._cached("etf_spot", 3600, fetch)
+
     def stock_hist(self, code: str, start: str, end: str) -> pd.DataFrame:
         import akshare as ak
 
@@ -293,7 +305,7 @@ def _from_json(raw: str) -> Any:
 def _empty_like(key: str) -> Any:
     if key.startswith(("index_daily", "index_valuation", "sector_quote",
                        "sector_flow", "sector_hist", "stock_spot", "stock_hist",
-                       "bond_yield")):
+                       "bond_yield", "etf_spot")):
         return pd.DataFrame()
     if key.startswith("stock_financial"):
         return {}

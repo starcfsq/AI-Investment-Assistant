@@ -131,17 +131,25 @@ def _prices_for_portfolio(portfolio: dict) -> dict[str, float]:
         if c:
             symbols.append(c)
     prices = {}
+    # 股票行情与 ETF 行情独立取价，互不拖累
     try:
         spot = _provider.stock_spot()
-        code_to_price = dict(zip(spot["code"], spot["price"]))
-        etf = _provider.etf_spot()
-        if not etf.empty and "代码" in etf.columns:
-            code_to_price.update(dict(zip(etf["代码"], etf["最新价"])))
-        for s in symbols:
-            if s in code_to_price:
-                prices[s] = float(code_to_price[s])
+        if not spot.empty and "code" in spot.columns:
+            code_map = dict(zip(spot["code"], spot["price"]))
+            for s in symbols:
+                if s in code_map:
+                    prices[s] = float(code_map[s])
     except Exception as exc:  # noqa: BLE001
-        logger.warning("取价失败: %s", exc)
+        logger.warning("股票行情取价失败: %s", exc)
+    try:
+        etf = _provider.etf_spot()
+        if not etf.empty and "code" in etf.columns:
+            code_map = dict(zip(etf["code"], etf["price"]))
+            for s in symbols:
+                if s in code_map:
+                    prices[s] = float(code_map[s])
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("ETF 取价失败: %s", exc)
     return prices
 
 
