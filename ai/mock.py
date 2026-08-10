@@ -24,7 +24,7 @@ class MockLLMClient(LLMClient):
                 break
         data = _extract_json(user_content)
         kind = _schema_kind(schema)
-        return _build(kind, data)
+        return _build(kind, data, user_content)
 
 
 def _extract_json(text: str):
@@ -55,7 +55,17 @@ def _schema_kind(schema: dict) -> str:
     return "generic"
 
 
-def _build(kind: str, data):
+def _extract_query(user_msg: str) -> str:
+    """从聊天消息里提取「用户问题：」后面的内容。"""
+    marker = "用户问题："
+    idx = user_msg.find(marker)
+    if idx == -1:
+        return ""
+    rest = user_msg[idx + len(marker):]
+    return rest.split("\n")[0].strip()
+
+
+def _build(kind: str, data, user_msg: str = ""):
     if kind == "trend":
         d = data if isinstance(data, dict) else {}
         state = d.get("state", "数据不足")
@@ -105,12 +115,32 @@ def _build(kind: str, data):
         }
     if kind == "chat":
         d = data if isinstance(data, dict) else {}
+        query = _extract_query(user_msg)
         trend = d.get("trend", {})
         state = trend.get("state", "数据不足")
+        stocks = d.get("stocks", [])
+        sectors = d.get("sectors", [])
+        warnings = d.get("warnings", [])
         until = d.get("data_until", "")
+        q = query or ""
+        if any(k in q for k in ("股票", "个股", "推荐", "标的", "买")):
+            if stocks:
+                names = "、".join(f"{s.get('name')}({s.get('code')})" for s in stocks[:3])
+                answer = f"当前量化筛选综合得分最高的标的有：{names}。请结合组合配置与自身风险偏好参考。"
+            else:
+                hint = "；".join(warnings[:2]) if warnings else "数据源暂不可用"
+                answer = (f"当前板块与个股数据不可用，无法给出具体股票推荐（{hint}）。"
+                          f"系统遵循「数据永不来自 LLM」原则，宁可如实说明数据不足，也不编造标的。")
+        elif any(k in q for k in ("板块", "行业")):
+            if sectors:
+                names = "、".join(s.get("name", "?") for s in sectors[:3])
+                answer = f"当前综合打分靠前的板块有：{names}。"
+            else:
+                answer = "当前板块数据不可用，无法给出板块推荐。"
+        else:
+            answer = f"根据当前看板分析，市场长期趋势为「{state}」（数据截至 {until}）。"
         return {
-            "answer": f"根据当前看板分析，市场长期趋势为「{state}」（数据截至 {until}）。"
-                      f"如需针对具体标的的新闻与公告解读，请在输入框填入对应股票代码。",
+            "answer": answer,
             "references": [],
             "confidence": CONFIDENCE,
             "disclaimer": DISCLAIMER,
