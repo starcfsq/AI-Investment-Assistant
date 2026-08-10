@@ -8,12 +8,12 @@ from pydantic import BaseModel
 
 from ai.chat import answer_question
 from ai.interpret import (
+    DISCLAIMER,
     interpret_trend,
     plan_portfolio,
     recommend_sectors,
     recommend_stocks,
 )
-from ai.provider import get_client
 from core.account import SimAccount
 from core.analyze import run_analysis
 from core.config import DB_PATH, load_weights
@@ -29,7 +29,7 @@ logger = get_logger("api.main")
 app = FastAPI(title="AI 智能投资助手")
 _store = Store(DB_PATH)
 _provider = DataProvider(_store)
-_client = get_client()
+_client = None
 _embed = get_embedding_provider()
 _account = SimAccount(_store)
 
@@ -39,8 +39,22 @@ class ChatRequest(BaseModel):
     symbol: str | None = None
 
 
-def _safe(client, fn, *args, **kwargs):
+def _get_client():
+    global _client
+    if _client is None:
+        try:
+            from ai.provider import get_client
+            _client = get_client()
+        except ValueError:
+            _client = None
+    return _client
+
+
+def _safe(fn, *args, **kwargs):
     try:
+        client = _get_client()
+        if client is None:
+            return {}
         return fn(client, *args, **kwargs)
     except Exception as exc:  # noqa: BLE001
         logger.warning("AI 解读失败，降级: %s", exc)
@@ -49,8 +63,9 @@ def _safe(client, fn, *args, **kwargs):
 
 @app.get("/api/dashboard")
 def dashboard():
+    _account.maybe_reset_period()
     analysis = run_analysis(_provider)
-    ai = _safe(_client, interpret_trend, analysis["trend"])
+    ai = _safe(interpret_trend, analysis["trend"])
     acc = _account.period_stats()
     iters = _store.list_iters()
     periods = _store.list_periods()
@@ -66,16 +81,17 @@ def dashboard():
 
 @app.post("/api/analyze")
 def analyze():
+    _account.maybe_reset_period()
     result = run_analysis(_provider)
     # 账户执行推荐并快照
     prices = _prices_for_portfolio(result["portfolio"])
     _account.execute(result["portfolio"], prices)
     _account.snapshot(prices)
     ai = {
-        "trend": _safe(_client, interpret_trend, result["trend"]),
-        "sectors": _safe(_client, recommend_sectors, result["sectors"]),
-        "stocks": _safe(_client, recommend_stocks, result["stocks"]),
-        "portfolio": _safe(_client, plan_portfolio, result["portfolio"]),
+        "trend": _safe(interpret_trend, result["trend"]),
+        "sectors": _safe(recommend_sectors, result["sectors"]),
+        "stocks": _safe(recommend_stocks, result["stocks"]),
+        "portfolio": _safe(plan_portfolio, result["portfolio"]),
     }
     # 将 result 展开到顶层（trend/sectors/stocks/portfolio/warnings 等），
     # 同时保留嵌套的 analysis 供看板消费者使用。
@@ -92,7 +108,12 @@ def chat(req: ChatRequest):
         if news:
             build_index(_embed, news, _store, symbol=req.symbol)
             rag_hits = retrieve(_embed, req.query, _store, top_k=5)
-    out = answer_question(_client, req.query, analysis, rag_hits)
+    client = _get_client()
+    if client is None:
+        return {"answer": "AI 服务未配置 DEEPSEEK_API_KEY，请参考看板数据。",
+                "references": [], "confidence": 0.0, "disclaimer": DISCLAIMER,
+                "data_until": analysis["data_until"]}
+    out = answer_question(client, req.query, analysis, rag_hits)
     return {"answer": out.get("answer", ""), "references": out.get("references", []),
             "confidence": out.get("confidence", 0.0),
             "disclaimer": out.get("disclaimer", ""),

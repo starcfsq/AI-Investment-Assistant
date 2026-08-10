@@ -86,7 +86,7 @@ async function send() {
   const d = await getJSON("/api/chat", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ query: q }),
+    body: JSON.stringify({ query: q, symbol: document.getElementById("symbol").value.trim() || null }),
   });
   const refs = (d.references || []).map(r =>
     `<div class="ref">· ${r.title}（${r.date}，${r.source}）</div>`).join("");

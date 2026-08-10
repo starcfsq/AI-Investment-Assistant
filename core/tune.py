@@ -26,7 +26,10 @@ def grid_search_weights(score_fn, data, base_weights: dict,
         score = score_fn(data, cand)["win_rate"]
         if score > best_score:
             best, best_score = cand, score
-    return best, best_score
+    # 网格组合各步相互独立，可能得到 sector 三权值之和不等于 1 的组合；
+    # 返回前归一化，保证 config/weights.json 与 test_weights_config_parseable 的
+    # "每组权重之和为 1.0" 不变式成立。
+    return _normalize_sector(best), best_score
 
 
 def run_iteration(provider, store) -> dict:
@@ -50,6 +53,8 @@ def run_iteration(provider, store) -> dict:
     best_weights, _ = grid_search_weights(
         train_score, None, weights, SECTOR_SEARCH["keys"], SECTOR_SEARCH["steps"]
     )
+    # 防御性归一化：确保写入 weights.json 前 sector 组之和精确为 1.0
+    best_weights = _normalize_sector(best_weights)
     old_test = backtest_sectors(test_hist, test_bench, weights)
     new_test = backtest_sectors(test_hist, test_bench, best_weights)
 
@@ -121,6 +126,23 @@ def _deep_copy(obj):
     import copy
 
     return copy.deepcopy(obj)
+
+
+def _normalize_sector(weights: dict) -> dict:
+    """把 sector 权重组归一化到精确和为 1.0（保留 4 位小数）。
+
+    网格搜索各步相互独立，可能得到如 {0.9, 0.5, 0.5}(和 1.9) 的非归一化组合；
+    这里按比例缩放到和为 1.0，并用修正最后一个分量的方式抵消四舍五入误差，
+    使 config/weights.json 始终满足 test_weights_config_parseable 的 1e-9 约束。
+    """
+    if "sector" not in weights:
+        return weights
+    s = weights["sector"]
+    total = sum(s.values()) or 1.0
+    items = {k: round(v / total, 4) for k, v in s.items()}
+    last = next(reversed(items))
+    items[last] = round(1.0 - sum(v for k, v in items.items() if k != last), 4)
+    return {**weights, "sector": items}
 
 
 def _dumps(obj) -> str:

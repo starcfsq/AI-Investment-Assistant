@@ -82,10 +82,14 @@ class SimAccount:
                     diff = (remaining - fee) / price
                     cost = diff * price
                     fee = cost * FEE_RATE
+                new_qty = cur_qty + diff
+                # 加仓用加权平均成本，避免把整个持仓成本重置为市价而扭曲胜率/收益率
+                old_cost = (cur_qty * current["cost_price"]) if current else 0.0
+                new_cost = (old_cost + diff * price) / new_qty if new_qty else price
                 self.store.save_position({
                     "symbol": sym, "name": _name_from(sym),
-                    "qty": cur_qty + diff,
-                    "cost_price": price, "updated_at": now,
+                    "qty": new_qty,
+                    "cost_price": new_cost, "updated_at": now,
                 })
                 self.store.insert_trade({
                     "time": now, "symbol": sym, "name": _name_from(sym),
