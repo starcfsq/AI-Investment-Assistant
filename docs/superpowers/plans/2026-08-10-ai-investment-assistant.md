@@ -758,6 +758,18 @@ class DataProvider:
 
         return self._cached("stock_spot", 3600, fetch)
 
+    def etf_spot(self) -> pd.DataFrame:
+        import akshare as ak
+
+        def fetch():
+            df = ak.fund_etf_spot_em()
+            return df.rename(
+                columns={"代码": "code", "名称": "name",
+                         "最新价": "price"}
+            )[["code", "name", "price"]].copy()
+
+        return self._cached("etf_spot", 3600, fetch)
+
     def stock_hist(self, code: str, start: str, end: str) -> pd.DataFrame:
         import akshare as ak
 
@@ -914,7 +926,7 @@ def _from_json(raw: str) -> Any:
 def _empty_like(key: str) -> Any:
     if key.startswith(("index_daily", "index_valuation", "sector_quote",
                        "sector_flow", "sector_hist", "stock_spot", "stock_hist",
-                       "bond_yield")):
+                       "bond_yield", "etf_spot")):
         return pd.DataFrame()
     if key.startswith("stock_financial"):
         return {}
@@ -3157,17 +3169,25 @@ def _prices_for_portfolio(portfolio: dict) -> dict[str, float]:
         if c:
             symbols.append(c)
     prices = {}
+    # 股票行情与 ETF 行情独立取价，互不拖累
     try:
         spot = _provider.stock_spot()
-        code_to_price = dict(zip(spot["code"], spot["price"]))
-        etf = _provider.etf_spot()
-        if not etf.empty and "代码" in etf.columns:
-            code_to_price.update(dict(zip(etf["代码"], etf["最新价"])))
-        for s in symbols:
-            if s in code_to_price:
-                prices[s] = float(code_to_price[s])
+        if not spot.empty and "code" in spot.columns:
+            code_map = dict(zip(spot["code"], spot["price"]))
+            for s in symbols:
+                if s in code_map:
+                    prices[s] = float(code_map[s])
     except Exception as exc:  # noqa: BLE001
-        logger.warning("取价失败: %s", exc)
+        logger.warning("股票行情取价失败: %s", exc)
+    try:
+        etf = _provider.etf_spot()
+        if not etf.empty and "code" in etf.columns:
+            code_map = dict(zip(etf["code"], etf["price"]))
+            for s in symbols:
+                if s in code_map:
+                    prices[s] = float(code_map[s])
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("ETF 取价失败: %s", exc)
     return prices
 
 
