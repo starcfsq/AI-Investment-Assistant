@@ -64,9 +64,9 @@ testpaths = ["tests"]
 ```
 fastapi==0.115.*
 uvicorn==0.30.*
-akshare==1.15.*
+akshare==1.16.*
 pandas==2.2.*
-numpy==1.26.*
+numpy==2.*
 python-dotenv==1.0.*
 requests==2.32.*
 pytest==8.*
