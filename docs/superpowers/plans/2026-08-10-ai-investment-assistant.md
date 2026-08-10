@@ -2493,8 +2493,9 @@ def test_grid_search_finds_best():
         search_keys=["sector.rs", "sector.flow"],
         steps=[0.8, 0.9],
     )
-    assert best_weights["sector"]["rs"] == 0.8
-    assert best_score == pytest.approx(0.8)
+    # fake_score_fn 以 rs 为胜率，steps=[0.8,0.9] 强制最优 rs=0.9
+    assert best_weights["sector"]["rs"] == 0.9
+    assert best_score == pytest.approx(0.9)
 ```
 
 - [ ] **Step 2: 运行测试确认失败**
