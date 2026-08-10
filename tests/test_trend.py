@@ -38,3 +38,11 @@ def test_trend_low_pe_is_opportunity():
                          "cn_10y": [3.0] * 100})
     result = analyze_trend(index, val, bond, WEIGHTS)
     assert result["state"] in ("低估机会", "中性合理")
+
+
+def test_trend_empty_index_safe():
+    import pandas as pd
+    from core.trend import analyze_trend
+
+    result = analyze_trend(pd.DataFrame(), pd.DataFrame(), pd.DataFrame(), WEIGHTS)
+    assert result["state"] == "中性合理"

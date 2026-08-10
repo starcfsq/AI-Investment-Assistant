@@ -41,6 +41,14 @@ def analyze_trend(index_df: pd.DataFrame, val_df: pd.DataFrame,
     - bond_df: date/cn_10y（用于股债性价比）
     """
     w = weights["trend"]
+    if index_df is None or index_df.empty or "close" not in index_df.columns:
+        return {
+            "signals": {"ma": 50.0, "valuation": 50.0, "bond": 50.0},
+            "state": "中性合理", "composite": 50.0,
+            "detail": {"ma_dev": 0.0, "pe_pct": 50.0, "pb_pct": 50.0,
+                       "bond_equity_pct": 50.0},
+            "data_until": "",
+        }
     last_close = float(index_df["close"].iloc[-1])
     last_date = str(index_df["date"].iloc[-1])[:10]
     ma_value = _ma(index_df["close"], 250)
