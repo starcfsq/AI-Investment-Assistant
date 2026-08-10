@@ -1936,7 +1936,9 @@ class EmbeddingProvider:
 class HashEmbedding(EmbeddingProvider):
     """离线确定性哈希向量，供测试与默认降级。"""
 
-    def embed(self, texts: list[str], dim: int = 64) -> list[list[float]]:
+    def embed(self, texts: list[str], dim: int = 512) -> list[list[float]]:
+        # 默认 512 维：64 维哈希碰撞会导致检索测试失真（无关文档误得高分）；
+        # 512 同时与 bge-small-zh 输出维度一致，降级换真实模型时宽度不变。
         vectors = []
         for text in texts:
             vec = np.zeros(dim, dtype=float)
