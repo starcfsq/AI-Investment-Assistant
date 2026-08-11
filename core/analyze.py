@@ -13,69 +13,99 @@ from core.trend import analyze_trend
 logger = get_logger("core.analyze")
 
 
+def _df(value) -> pd.DataFrame:
+    """None/缺失 → 空 DataFrame。不能用 `value or df`，会触发 bool(DataFrame) 歧义。"""
+    return pd.DataFrame() if value is None else value
+
+
+def analyze_at(data: dict, weights: dict) -> dict:
+    """给定数据切片 + 权重，计算趋势/板块/组合。纯函数，不访问网络。"""
+    index_df = _df(data.get("index_df"))
+    val_df = _df(data.get("val_df"))
+    bond_df = _df(data.get("bond_df"))
+    quotes = _df(data.get("quotes"))
+    flow = _df(data.get("flow"))
+    hist = data.get("hist") or {}
+    bench = _df(data.get("bench"))
+    trend = {}
+    if not index_df.empty:
+        try:
+            trend = analyze_trend(index_df, val_df, bond_df, weights)
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("趋势分析失败: %s", exc)
+    sectors = []
+    if not quotes.empty and "name" in quotes.columns and not bench.empty:
+        try:
+            sectors = score_sectors(quotes, flow, hist, bench, weights)
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("板块分析失败: %s", exc)
+    portfolio = build_portfolio(sectors[:4]) if sectors else {}
+    warnings = _sufficiency_warnings(index_df, val_df, quotes, sectors, [])
+    return {"trend": trend, "sectors": sectors[:10], "portfolio": portfolio,
+            "warnings": warnings}
+
+
 def run_analysis(provider) -> dict:
     weights = load_weights()
-    trend = {}
-    index_df, val_df, quotes = None, None, None
+    index_df = val_df = bond_df = quotes = flow = bench = spot = None
     try:
         index_df = provider.index_daily("沪深300")
         val_df = provider.index_valuation("沪深300")
         bond_df = provider.bond_yield()
-        if not index_df.empty:
-            trend = analyze_trend(index_df, val_df, bond_df, weights)
     except Exception as exc:  # noqa: BLE001
-        logger.warning("趋势分析失败: %s", exc)
-
-    sectors = []
+        logger.warning("趋势数据拉取失败: %s", exc)
+    hist = {}
     try:
         quotes = provider.sector_quote()
         flow = provider.sector_flow()
-        hist = {}
         if not quotes.empty and "name" in quotes.columns:
             for name in list(quotes["name"])[:30]:
                 h = provider.sector_hist(name)
                 if not h.empty:
                     hist[name] = h
         bench = provider.index_daily(provider.benchmark_index_code())
-        if not quotes.empty and not bench.empty:
-            sectors = score_sectors(quotes, flow, hist, bench, weights)
     except Exception as exc:  # noqa: BLE001
-        logger.warning("板块分析失败: %s", exc)
-
-    stocks = []
+        logger.warning("板块数据拉取失败: %s", exc)
     try:
         spot = provider.stock_spot()
-        if not spot.empty and sectors:
-            top_names = [s["name"] for s in sectors[:5]]
-            candidates = []
-            pool = _candidate_pool(spot, top_names)
-            for _, row in pool.head(20).iterrows():
-                fin = provider.stock_financial(row["code"])
-                if fin.get("pe"):
-                    candidates.append({
-                        "code": row["code"], "name": row["name"],
-                        "roe": fin.get("roe", 0.0), "growth": fin.get("growth", 0.0),
-                        "pe": fin.get("pe", 0.0), "pe_pct": fin.get("pe_pct"),
-                        "dividend": fin.get("dividend", 0.0),
-                    })
-            stocks = rank_stocks(candidates, weights)[:10]
     except Exception as exc:  # noqa: BLE001
-        logger.warning("选股失败: %s", exc)
-
-    portfolio = build_portfolio(sectors[:4]) if sectors else {}
-
-    data_until = trend.get("data_until", datetime.now().strftime("%Y-%m-%d"))
-    warnings = _sufficiency_warnings(index_df, val_df, quotes, sectors, stocks)
+        logger.warning("行情拉取失败: %s", exc)
+    base = analyze_at({
+        "index_df": index_df, "val_df": val_df, "bond_df": bond_df,
+        "quotes": quotes, "flow": flow, "hist": hist, "bench": bench,
+    }, weights)
+    stocks = _rank_stocks(spot, base["sectors"], provider, weights)
+    data_until = base["trend"].get("data_until",
+                                   datetime.now().strftime("%Y-%m-%d"))
     return {
         "generated_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-        "trend": trend,
-        "sectors": sectors[:10],
-        "stocks": stocks,
-        "portfolio": portfolio,
-        "data_until": data_until,
-        "data_quality": provider.quality_report(),
-        "warnings": warnings,
+        "trend": base["trend"], "sectors": base["sectors"], "stocks": stocks,
+        "portfolio": base["portfolio"], "data_until": data_until,
+        "data_quality": provider.quality_report(), "warnings": base["warnings"],
     }
+
+
+def _rank_stocks(spot, sectors, provider, weights):
+    """实时个股选股（依赖网络财务数据；无 spot/sectors 时返回空）。"""
+    if spot is None or spot.empty or not sectors:
+        return []
+    try:
+        top_names = [s["name"] for s in sectors[:5]]
+        candidates = []
+        pool = _candidate_pool(spot, top_names)
+        for _, row in pool.head(20).iterrows():
+            fin = provider.stock_financial(row["code"])
+            if fin.get("pe"):
+                candidates.append({
+                    "code": row["code"], "name": row["name"],
+                    "roe": fin.get("roe", 0.0), "growth": fin.get("growth", 0.0),
+                    "pe": fin.get("pe", 0.0), "pe_pct": fin.get("pe_pct"),
+                    "dividend": fin.get("dividend", 0.0),
+                })
+        return rank_stocks(candidates, weights)[:10]
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("选股失败: %s", exc)
+        return []
 
 
 def _candidate_pool(spot: pd.DataFrame, top_names: list[str]) -> pd.DataFrame:

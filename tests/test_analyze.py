@@ -34,3 +34,22 @@ def test_candidate_pool_empty_spot_returns_empty():
 
     empty = _spot().iloc[0:0]
     assert _candidate_pool(empty, ["医疗服务"]).empty
+
+
+def test_analyze_at_pure_computation():
+    from core.analyze import analyze_at
+    import pandas as pd
+    index = pd.DataFrame({"date": ["2026-08-10"], "close": [4000.0]})
+    data = {
+        "index_df": index,
+        "val_df": pd.DataFrame({"date": ["2026-08-10"], "pe": [13.0], "pb": [1.4]}),
+        "bond_df": pd.DataFrame({"date": ["2026-08-10"], "cn_10y": [2.5]}),
+        "quotes": pd.DataFrame({"name": ["医疗服务"], "pct_change": [2.0]}),
+        "flow": pd.DataFrame(),
+        "hist": {"医疗服务": pd.DataFrame({"date": ["2026-08-10"], "close": [100.0]})},
+        "bench": index,
+    }
+    from core.config import load_weights
+    out = analyze_at(data, load_weights())
+    assert set(out) == {"trend", "sectors", "portfolio", "warnings"}
+    assert "trend" in out and "sectors" in out and "portfolio" in out
