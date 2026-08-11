@@ -39,7 +39,8 @@ class SimAccount:
         acc = self.store.get_account()
         return (acc.get("period_start") or _today())[:7]
 
-    def execute(self, portfolio: dict, prices: dict[str, float]) -> list[dict]:
+    def execute(self, portfolio: dict, prices: dict[str, float],
+                trade_time: str | None = None) -> list[dict]:
         self.ensure_initialized()
         acc = self.store.get_account()
         cash = acc["cash"]
@@ -57,7 +58,8 @@ class SimAccount:
                 target_by_symbol[sym] = weight
 
         existing = {p["symbol"]: p for p in self.store.list_positions()}
-        now = _now()
+        # 模拟/回测可传入 trade_time 覆盖墙钟时间；缺省保持实时调用不变
+        now = trade_time or _now()
         # 卖出不在目标中的持仓
         for sym, pos in existing.items():
             if sym not in target_by_symbol:

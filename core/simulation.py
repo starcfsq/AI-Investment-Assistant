@@ -122,6 +122,8 @@ def run_year_simulation(provider, store, lookback_days: int = 365) -> dict:
     account = SimAccount(store)
     account.ensure_initialized()
     rebalances = []
+    # 每次调仓后的账户状态快照（现金 + 持仓），供逐日净值曲线按当日实际持仓估值
+    state_snapshots = []
     for rd in rebalance_dates:
         snap = hp.snapshot_at(rd)
         base = analyze_at(snap, weights)
@@ -136,27 +138,52 @@ def run_year_simulation(provider, store, lookback_days: int = 365) -> dict:
                 c = closes[closes["date"] <= pd.to_datetime(rd)]
                 if not c.empty:
                     prices[code.group(1)] = float(c["close"].iloc[-1])
-        account.execute(port, prices)
+        account.execute(port, prices, trade_time=rd)
+        acc = store.get_account()
+        state_snapshots.append({
+            "date": pd.to_datetime(rd),
+            "cash": float(acc.get("cash", 0.0)),
+            "positions": {p["symbol"]: dict(p) for p in store.list_positions()},
+        })
         rebalances.append({"date": rd, "weights": {
             (port["core"]["name"]): port["core"]["weight"]} | {
             s["name"]: s["weight"] for s in port.get("satellite", [])}})
-    return _build_result(account, store, hp, bench, rebalances, all_dates)
+    return _build_result(account, store, hp, bench, rebalances, all_dates,
+                         state_snapshots)
 
 
-def _build_result(account, store, hp, bench, rebalances, all_dates) -> dict:
-    """按全部基准日生成净值/基准曲线，聚合交易与统计。"""
+def _state_at(state_snapshots, d) -> dict | None:
+    """返回日期 <= d 的最近一次调仓后状态快照；尚未调仓时返回 None。"""
+    snap = None
+    for s in state_snapshots:
+        if s["date"] <= d:
+            snap = s
+        else:
+            break
+    return snap
+
+
+def _build_result(account, store, hp, bench, rebalances, all_dates,
+                  state_snapshots) -> dict:
+    """按全部基准日生成净值/基准曲线，聚合交易与统计。
+
+    每日 NAV = 当日实际持有的现金 + Σ(持仓量 × 当日或此前最近收盘价)。
+    首次调仓前的日期使用初始资金、空持仓，避免把最终持仓前视到历史点。
+    """
     curve = []
     trades = [dict(t) for t in store.list_trades()]
     bench = bench.copy()
     bench["date"] = pd.to_datetime(bench["date"])
     base_close = float(bench["close"].iloc[0]) if len(bench) else 1.0
+    initial_capital = float(account.initial_capital)
     for d in pd.to_datetime(all_dates):
         dstr = d.strftime("%Y-%m-%d")
-        acc = store.get_account()
-        cash = float(acc.get("cash", 0.0))
+        snap = _state_at(state_snapshots, d)
+        cash = float(snap["cash"]) if snap else initial_capital
         holdings = 0.0
-        for pos in store.list_positions():
-            closes = hp.etf_close(pos["symbol"])
+        positions = snap["positions"] if snap else {}
+        for sym, pos in positions.items():
+            closes = hp.etf_close(sym)
             c = closes[closes["date"] <= d]
             price = float(c["close"].iloc[-1]) if not c.empty else pos["cost_price"]
             holdings += pos["qty"] * price

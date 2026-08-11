@@ -55,20 +55,46 @@ def test_run_year_simulation_returns_structure():
     assert len(out["curve"]) >= 1
 
 
+def test_curve_first_point_is_initial_cash_and_trades_dated(monkeypatch):
+    """净值曲线首点在首次调仓之前 = 初始资金（无持仓）；调仓交易时间为调仓日。"""
+    from core.simulation import run_year_simulation
+    from core.store import Store
+    import tempfile
+    monkeypatch.setenv("ACCOUNT_INITIAL_CAPITAL", "100000")
+    store = Store(tempfile.mkdtemp() + "/t.db")
+    provider = _FakeSimProvider()
+    out = run_year_simulation(provider, store, lookback_days=90)
+    # 首个调仓日为每月最后交易日（2026-01-30），晚于首条曲线日 2026-01-05
+    assert out["rebalances"][0]["date"] == "2026-01-30"
+    # 首曲线点在首次调仓之前：净值 = 初始资金，且没有任何持仓
+    assert out["curve"][0]["date"] == "2026-01-05"
+    assert out["curve"][0]["nav"] == 100000.0
+    # 模拟调仓买入交易的时间戳 = 调仓日字符串（而非墙钟时间）
+    buys = [t for t in out["trades"] if t["side"] == "buy"]
+    assert buys and buys[0]["time"] == "2026-01-30"
+
+
 class _FakeSimProvider:
-    """小型历史数据的 fake provider，供模拟测试离线使用。"""
+    """小型历史数据的 fake provider，供模拟测试离线使用。
+
+    每月含多个交易日，使首个调仓日（每月最后交易日）落在首条曲线日期之后，
+    从而可以断言"调仓前"的净值点。
+    """
 
     def __init__(self):
         import pandas as pd
-        dates = pd.to_datetime(["2026-01-05", "2026-02-02", "2026-03-02"])
+        dates = pd.to_datetime(["2026-01-05", "2026-01-30",
+                                "2026-02-27", "2026-03-31"])
         self.index = pd.DataFrame({"date": dates,
-                                   "close": [4000.0, 4100.0, 4200.0]})
+                                   "close": [4000.0, 4100.0, 4200.0, 4300.0]})
         self.val = pd.DataFrame({"date": dates,
-                                 "pe": [13.0, 13.5, 14.0], "pb": [1.4, 1.4, 1.5]})
-        self.bond = pd.DataFrame({"date": dates, "cn_10y": [2.5, 2.5, 2.6]})
+                                 "pe": [13.0, 13.5, 14.0, 14.5],
+                                 "pb": [1.4, 1.4, 1.5, 1.5]})
+        self.bond = pd.DataFrame({"date": dates,
+                                  "cn_10y": [2.5, 2.5, 2.6, 2.6]})
         self.quotes = pd.DataFrame({"name": ["医疗服务"], "pct_change": [2.0]})
         self.hist = {"医疗服务": pd.DataFrame(
-            {"date": dates, "close": [100.0, 105.0, 110.0]})}
+            {"date": dates, "close": [100.0, 105.0, 110.0, 115.0]})}
 
     def index_daily(self, symbol="沪深300"):
         return self.index
@@ -94,6 +120,7 @@ class _FakeSimProvider:
     def etf_close(self, code6):
         import pandas as pd
         return pd.DataFrame({
-            "date": pd.to_datetime(["2026-01-05", "2026-02-02", "2026-03-02"]),
-            "close": [3.9, 4.0, 4.1],
+            "date": pd.to_datetime(["2026-01-05", "2026-01-30",
+                                    "2026-02-27", "2026-03-31"]),
+            "close": [3.9, 4.0, 4.1, 4.2],
         })
