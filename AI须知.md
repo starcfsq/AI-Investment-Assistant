@@ -50,6 +50,8 @@ core/       确定性分析引擎（全部数字在此产生）
   tune.py       权重网格搜索：grid_search_weights() / run_iteration()
   account.py    虚拟账户：SimAccount（execute / snapshot / period_stats / maybe_reset_period）
   analyze.py    串起整条分析链路：run_analysis(provider)
+  simulation.py 一年模拟引擎：HistoryProvider（历史数据一次性加载 + 按日快照防前视）+ run_year_simulation()（月度调仓回放，输出 curve/trades/stats）
+  auto_invest.py AI 自动投资调度：is_trading_day() + run_auto_invest()（启动即执行一次 + 每个交易日收盘后自动）
   store.py      SQLite 统一存储：Store 类（缓存/账户/持仓/交易/快照/阶段/迭代历史/新闻/向量块）
   embedding.py  文本向量化：get_embedding_provider()（sentence-transformers，缺则 HashEmbedding 降级）
   config.py     路径与配置：DB_PATH / WEIGHTS_PATH / load_weights() / save_weights() / get_env()
@@ -171,6 +173,7 @@ DEEPSEEK_API_KEY=test .venv/Scripts/python.exe -m pytest -v
    - 个股行情：`stock_zh_a_spot_em`（东财）优先、`stock_zh_a_spot`（新浪）回退（`_normalize_spot` 统一去 `sh/sz/bj` 前缀为 6 位 code）
    - 板块行情/资金流：东财 `stock_board_industry_name_em`/`stock_sector_fund_flow_rank` 优先，失败回退同花顺 `stock_board_industry_summary_ths`（板块/涨跌幅/净流入）
    - 板块K线：东财 `stock_board_industry_hist_em` 优先，失败回退同花顺 `stock_board_industry_index_ths`（日期/收盘价）；`DataProvider` 带**熔断**（东财板块历史连续失败 2 次后直接走同花顺，避免循环等待超时）
+   - ETF 历史（模拟引擎用，东财被限流）：`core/simulation.py::HistoryProvider.etf_close` 直接走新浪 `fund_etf_hist_sina`（前缀 `sh`/`sz` + 6 位 code，结果统一为 date/close）；板块历史则如上面所述在**东财限流/失败**时回退同花顺 `stock_board_industry_index_ths`
    - 抓取统一走 `_cached`：重试 3 次 + 指数退避（0.5s/1s/2s）。每个接口返回列名也做了 `.rename(...)`，新版本列名变了会静默返回空数据（`status=missing`），此时看板会显示数据不足，不是崩溃。
 2. **`.env` 不入库；`data/` 不入库**（`.gitignore` 已覆盖）。**绝不要把 `DEEPSEEK_API_KEY` 提交进 git**，也绝不提交 `data/app.db`。
 3. **`data/app.db` 是运行时状态的唯一来源**，包含：数据缓存 `cache`、虚拟账户 `account`、持仓 `positions`、交易 `trades`、净值快照 `snapshots`、阶段历史 `periods`、回测迭代历史 `iter_history`、新闻 `news`、RAG 向量块 `rag_chunks`。**删除 `data/app.db` 即重置全部运行状态**（账户归零、缓存清空、迭代历史消失）。
