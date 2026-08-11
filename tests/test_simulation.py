@@ -1,5 +1,16 @@
 import pandas as pd
 import pytest
+from datetime import datetime
+
+
+class _FixedNow:
+    """固定 'now'，让 run_year_simulation 的 lookback 窗口可预测，测试结果确定。"""
+
+    NOW = datetime(2026, 6, 15, 10, 0, 0)
+
+    @classmethod
+    def now(cls):
+        return cls.NOW
 
 
 def _fake_provider():
@@ -43,10 +54,11 @@ def test_monthly_rebalance_dates():
     assert out == ["2026-01-30", "2026-02-27", "2026-03-31"]
 
 
-def test_run_year_simulation_returns_structure():
+def test_run_year_simulation_returns_structure(monkeypatch):
     from core.simulation import run_year_simulation
     from core.store import Store
     import tempfile
+    monkeypatch.setattr("core.simulation.datetime", _FixedNow)
     store = Store(tempfile.mkdtemp() + "/t.db")
     provider = _FakeSimProvider()
     out = run_year_simulation(provider, store, lookback_days=90)
@@ -60,41 +72,65 @@ def test_curve_first_point_is_initial_cash_and_trades_dated(monkeypatch):
     from core.simulation import run_year_simulation
     from core.store import Store
     import tempfile
+    monkeypatch.setattr("core.simulation.datetime", _FixedNow)
     monkeypatch.setenv("ACCOUNT_INITIAL_CAPITAL", "100000")
     store = Store(tempfile.mkdtemp() + "/t.db")
     provider = _FakeSimProvider()
     out = run_year_simulation(provider, store, lookback_days=90)
-    # 首个调仓日为每月最后交易日（2026-01-30），晚于首条曲线日 2026-01-05
-    assert out["rebalances"][0]["date"] == "2026-01-30"
-    # 首曲线点在首次调仓之前：净值 = 初始资金，且没有任何持仓
-    assert out["curve"][0]["date"] == "2026-01-05"
+    assert out["rebalances"], "窗口内应有调仓"
+    first_rebal = out["rebalances"][0]["date"]
+    # 窗口内首条曲线日在首次调仓之前：净值 = 初始资金，且没有任何持仓
+    assert out["curve"][0]["date"] < first_rebal
     assert out["curve"][0]["nav"] == 100000.0
     # 模拟调仓买入交易的时间戳 = 调仓日字符串（而非墙钟时间）
     buys = [t for t in out["trades"] if t["side"] == "buy"]
-    assert buys and buys[0]["time"] == "2026-01-30"
+    assert buys and buys[0]["time"] == first_rebal
+
+
+def test_curve_bounded_to_lookback_window(monkeypatch):
+    """C1：曲线被裁剪到 lookback 窗口（非全量历史），首点为初始资金。"""
+    from core.simulation import run_year_simulation
+    from core.store import Store
+    import tempfile
+    monkeypatch.setattr("core.simulation.datetime", _FixedNow)
+    monkeypatch.setenv("ACCOUNT_INITIAL_CAPITAL", "100000")
+    store = Store(tempfile.mkdtemp() + "/t.db")
+    provider = _FakeSimProvider(n_years=3)
+    out = run_year_simulation(provider, store, lookback_days=180)
+    assert "error" not in out, out.get("error")
+    assert out["curve"], "曲线不应为空"
+    span = (pd.Timestamp(out["curve"][-1]["date"])
+            - pd.Timestamp(out["curve"][0]["date"])).days
+    assert span <= 200, f"曲线日期跨度应 <= ~200 天，实际 {span}"
+    assert span >= 60, f"曲线日期跨度不应过短，实际 {span}"
+    assert out["curve"][0]["nav"] == 100000.0, "首点应为初始资金"
 
 
 class _FakeSimProvider:
-    """小型历史数据的 fake provider，供模拟测试离线使用。
+    """离线 fake：历史数据覆盖 n_years 年，lookback 窗口落在其中。
 
-    每月含多个交易日，使首个调仓日（每月最后交易日）落在首条曲线日期之后，
-    从而可以断言"调仓前"的净值点。
+    每个工作日一条数据，窗口起点本身即为曲线首点（早于当月最后交易日），
+    因此可断言"调仓前"的净值点。默认 3 年保证既有测试（lookback_days=90）
+    与新测试（lookback_days=180）都能命中窗口。
     """
 
-    def __init__(self):
+    def __init__(self, n_years=3):
         import pandas as pd
-        dates = pd.to_datetime(["2026-01-05", "2026-01-30",
-                                "2026-02-27", "2026-03-31"])
+        end = pd.Timestamp(_FixedNow.NOW)
+        start = end - pd.DateOffset(years=n_years)
+        dates = pd.bdate_range(start, end)
+        n = len(dates)
+        self._dates = dates
         self.index = pd.DataFrame({"date": dates,
-                                   "close": [4000.0, 4100.0, 4200.0, 4300.0]})
+                                   "close": [4000.0 + i * 0.5 for i in range(n)]})
         self.val = pd.DataFrame({"date": dates,
-                                 "pe": [13.0, 13.5, 14.0, 14.5],
-                                 "pb": [1.4, 1.4, 1.5, 1.5]})
+                                 "pe": [13.0 + (i % 20) * 0.05 for i in range(n)],
+                                 "pb": [1.4 + (i % 20) * 0.01 for i in range(n)]})
         self.bond = pd.DataFrame({"date": dates,
-                                  "cn_10y": [2.5, 2.5, 2.6, 2.6]})
+                                  "cn_10y": [2.5 + (i % 10) * 0.02 for i in range(n)]})
         self.quotes = pd.DataFrame({"name": ["医疗服务"], "pct_change": [2.0]})
         self.hist = {"医疗服务": pd.DataFrame(
-            {"date": dates, "close": [100.0, 105.0, 110.0, 115.0]})}
+            {"date": dates, "close": [100.0 + i * 0.1 for i in range(n)]})}
 
     def index_daily(self, symbol="沪深300"):
         return self.index
@@ -119,8 +155,6 @@ class _FakeSimProvider:
 
     def etf_close(self, code6):
         import pandas as pd
-        return pd.DataFrame({
-            "date": pd.to_datetime(["2026-01-05", "2026-01-30",
-                                    "2026-02-27", "2026-03-31"]),
-            "close": [3.9, 4.0, 4.1, 4.2],
-        })
+        n = len(self._dates)
+        return pd.DataFrame({"date": self._dates,
+                             "close": [3.9 + i * 0.001 for i in range(n)]})

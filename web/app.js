@@ -131,19 +131,22 @@ function drawSimChart(curve) {
   const ctx = c.getContext("2d");
   const W = c.width, H = c.height, pad = 30;
   ctx.clearRect(0, 0, W, H);
-  const xs = curve.map((_, i) => i), ys = curve.map(p => p.nav);
+  // 净值归一化到 1.0 起，与基准同尺度绘制，避免基准线被钉在底部。
+  const base = curve[0].nav || 1;
+  const navs = curve.map(p => p.nav / base);
+  const ys = navs.concat(curve.map(p => p.benchmark));
   const yMax = Math.max(...ys) * 1.05, yMin = Math.min(...ys) * 0.95;
   if (yMax === yMin) return;  // 平坦曲线：无法绘制有意义的刻度
-  const px = i => pad + i / (xs.length - 1) * (W - 2 * pad);
+  const px = i => pad + i / (navs.length - 1) * (W - 2 * pad);
   const py = v => H - pad - (v - yMin) / (yMax - yMin) * (H - 2 * pad);
   ctx.strokeStyle = "#1f77b4"; ctx.beginPath();
-  curve.forEach((p, i) => i === 0 ? ctx.moveTo(px(i), py(p.nav)) : ctx.lineTo(px(i), py(p.nav)));
+  curve.forEach((p, i) => i === 0 ? ctx.moveTo(px(i), py(navs[i])) : ctx.lineTo(px(i), py(navs[i])));
   ctx.stroke();
   ctx.strokeStyle = "#999"; ctx.beginPath();
   curve.forEach((p, i) => i === 0 ? ctx.moveTo(px(i), py(p.benchmark)) : ctx.lineTo(px(i), py(p.benchmark)));
   ctx.stroke();
   ctx.fillStyle = "#333";
-  ctx.fillText("模拟净值", pad + 4, pad + 12);
+  ctx.fillText("模拟净值(归一)", pad + 4, pad + 12);
   ctx.fillText("沪深300", pad + 4, pad + 26);
 }
 

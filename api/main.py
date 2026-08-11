@@ -60,6 +60,12 @@ async def _auto_invest_loop():
 
     enabled = get_env("AUTO_INVEST_ENABLED", "1") == "1"
     hh, mm = (get_env("AUTO_INVEST_TIME", "15:30") + ":00").split(":")[:2]
+    # 启动即执行一次（无条件，幂等：execute 按目标权重调仓）
+    try:
+        with _invest_lock:
+            await asyncio.to_thread(_auto_invest, _provider, _account, _store)
+    except Exception as exc:  # noqa: BLE001
+        logger.error("启动自动投资失败: %s", exc)
     while enabled:
         try:
             now = datetime.now()
@@ -150,11 +156,15 @@ def analyze():
 def simulation():
     if _sim_cache:
         return _sim_cache
-    # 用独立内存库跑模拟，避免把模拟交易写入真实虚拟账户（data/app.db）。
-    from core.store import Store
+    try:
+        # 用独立内存库跑模拟，避免把模拟交易写入真实虚拟账户（data/app.db）。
+        from core.store import Store
 
-    sim_store = Store(":memory:")
-    out = run_year_simulation(_provider, sim_store)
+        sim_store = Store(":memory:")
+        out = run_year_simulation(_provider, sim_store)
+    except Exception as exc:  # noqa: BLE001
+        logger.error("模拟失败: %s", exc)
+        return {"error": str(exc)}
     _sim_cache.update(out)
     return out
 

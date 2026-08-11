@@ -82,15 +82,23 @@ class HistoryProvider:
         """
         if code6 in self._etf_cache:
             return self._etf_cache[code6]
-        if hasattr(self.provider, "etf_close"):
-            out = self.provider.etf_close(code6)
-        else:
-            import akshare as ak
-            prefix = "sh" if code6.startswith(("5", "6")) else "sz"
-            df = ak.fund_etf_hist_sina(symbol=prefix + code6)
-            out = df[["date", "close"]].copy()
-        out = out[["date", "close"]].copy()
-        out["date"] = pd.to_datetime(out["date"])
+        try:
+            if hasattr(self.provider, "etf_close"):
+                out = self.provider.etf_close(code6)
+            else:
+                import akshare as ak
+                prefix = "sh" if code6.startswith(("5", "6")) else "sz"
+                df = ak.fund_etf_hist_sina(symbol=prefix + code6)
+                out = df[["date", "close"]].copy()
+            if out is None or out.empty or "date" not in out.columns or "close" not in out.columns:
+                # 接口失败/响应为空/缺列 → 返回空表，调用方沿用成本价降级，不抛出。
+                out = pd.DataFrame(columns=["date", "close"])
+            else:
+                out = out[["date", "close"]].copy()
+                out["date"] = pd.to_datetime(out["date"])
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("ETF 历史获取失败 %s: %s", code6, exc)
+            out = pd.DataFrame(columns=["date", "close"])
         self._etf_cache[code6] = out
         return out
 
@@ -116,6 +124,16 @@ def run_year_simulation(provider, store, lookback_days: int = 365) -> dict:
     if bench.empty:
         return {"stats": {}, "curve": [], "trades": [], "rebalances": [],
                 "error": "基准历史不足"}
+    # 把基准裁剪到 lookback 窗口，避免模拟横跨全量指数历史（如 20 年），
+    # 导致净值曲线在前段多年为初始资金、总收益与基准收益区间不一致。
+    start_dt = datetime.now() - timedelta(days=lookback_days)
+    b = bench.copy()
+    b["date"] = pd.to_datetime(b["date"])
+    b = b[b["date"] >= pd.to_datetime(start_dt.strftime("%Y-%m-%d"))].reset_index(drop=True)
+    if len(b) < 2:
+        return {"stats": {}, "curve": [], "trades": [], "rebalances": [],
+                "error": "基准历史不足"}
+    bench = b
     all_dates = pd.to_datetime(bench["date"])
     rebalance_dates = _monthly_rebalance_dates(all_dates)
     weights = load_weights()
