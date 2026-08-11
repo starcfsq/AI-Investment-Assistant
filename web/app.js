@@ -112,9 +112,9 @@ async function loadSimulation() {
   if (d.error) { document.getElementById("sim-trades").innerHTML = "<p>" + d.error + "</p>"; return; }
   const st = d.stats || {};
   document.getElementById("sim-stats").innerHTML = [
-    card("总收益", (st.total_return * 100).toFixed(2) + "%"),
-    card("基准收益", (st.benchmark_return * 100).toFixed(2) + "%"),
-    card("交易笔数", st.n_trades),
+    card("总收益", st.total_return != null ? (st.total_return * 100).toFixed(2) + "%" : "—"),
+    card("基准收益", st.benchmark_return != null ? (st.benchmark_return * 100).toFixed(2) + "%" : "—"),
+    card("交易笔数", st.n_trades != null ? st.n_trades : "—"),
   ].join("");
   drawSimChart(d.curve);
   document.getElementById("sim-trades").innerHTML = table(
@@ -127,12 +127,13 @@ async function loadSimulation() {
 
 function drawSimChart(curve) {
   const c = document.getElementById("sim-chart");
-  if (!c || !curve || curve.length === 0) return;
+  if (!c || !curve || curve.length < 2) return;
   const ctx = c.getContext("2d");
   const W = c.width, H = c.height, pad = 30;
   ctx.clearRect(0, 0, W, H);
   const xs = curve.map((_, i) => i), ys = curve.map(p => p.nav);
   const yMax = Math.max(...ys) * 1.05, yMin = Math.min(...ys) * 0.95;
+  if (yMax === yMin) return;  // 平坦曲线：无法绘制有意义的刻度
   const px = i => pad + i / (xs.length - 1) * (W - 2 * pad);
   const py = v => H - pad - (v - yMin) / (yMax - yMin) * (H - 2 * pad);
   ctx.strokeStyle = "#1f77b4"; ctx.beginPath();
