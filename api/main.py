@@ -18,6 +18,7 @@ from core.account import SimAccount
 from core.analyze import run_analysis
 from core.config import DB_PATH, load_weights
 from core.data import DataProvider
+from core.history import build_history_summary
 from core.logging import get_logger
 from core.rag import build_index, retrieve
 from core.store import Store
@@ -102,6 +103,7 @@ def analyze():
 @app.post("/api/chat")
 def chat(req: ChatRequest):
     analysis = run_analysis(_provider)
+    history = build_history_summary(_store, _account)
     rag_hits = []
     if req.symbol:
         news = _provider.stock_news(req.symbol) + _provider.stock_notices(req.symbol)
@@ -113,7 +115,7 @@ def chat(req: ChatRequest):
         return {"answer": "AI 服务未配置 DEEPSEEK_API_KEY，请参考看板数据。",
                 "references": [], "confidence": 0.0, "disclaimer": DISCLAIMER,
                 "data_until": analysis["data_until"]}
-    out = answer_question(client, req.query, analysis, rag_hits)
+    out = answer_question(client, req.query, analysis, rag_hits, history)
     return {"answer": out.get("answer", ""), "references": out.get("references", []),
             "confidence": out.get("confidence", 0.0),
             "disclaimer": out.get("disclaimer", ""),
