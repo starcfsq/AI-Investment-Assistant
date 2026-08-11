@@ -28,3 +28,9 @@ th { background: #f9fafb; }
 .msg.user { text-align: right; color: #2563eb; }
 .msg .ref { font-size: 12px; color: #6b7280; }
 footer { padding: 12px 24px; font-size: 12px; color: #9ca3af; text-align: center; }
+#sim-section { margin: 0 24px 16px; padding: 16px 24px; background: #fff; border-radius: 8px;
+               box-shadow: 0 1px 3px rgba(0,0,0,.1); }
+#sim-section h2 { font-size: 15px; margin: 12px 0 8px; border-left: 3px solid #2563eb; padding-left: 8px; }
+#sim-section h3 { font-size: 14px; margin: 12px 0 8px; }
+#sim-section button { padding: 8px 16px; border: none; border-radius: 6px; cursor: pointer;
+                      background: #2563eb; color: #fff; }
