@@ -31,3 +31,69 @@ def test_snapshot_at_keeps_bench_parallel():
     snap = _snapshot_at(data, "2026-02-01")
     assert list(snap["index_df"]["close"]) == [1.0]
     assert list(snap["bench"]["close"]) == [1.0]
+
+
+def test_monthly_rebalance_dates():
+    from core.simulation import _monthly_rebalance_dates
+    dates = pd.to_datetime([
+        "2026-01-05", "2026-01-28", "2026-01-29", "2026-01-30",
+        "2026-02-02", "2026-02-27", "2026-03-02", "2026-03-31"])
+    out = _monthly_rebalance_dates(dates)
+    # 每月最后交易日
+    assert out == ["2026-01-30", "2026-02-27", "2026-03-31"]
+
+
+def test_run_year_simulation_returns_structure():
+    from core.simulation import run_year_simulation
+    from core.store import Store
+    import tempfile
+    store = Store(tempfile.mkdtemp() + "/t.db")
+    provider = _FakeSimProvider()
+    out = run_year_simulation(provider, store, lookback_days=90)
+    assert {"stats", "curve", "trades", "rebalances"} <= set(out)
+    assert out["stats"]["total_return"] is not None
+    assert len(out["curve"]) >= 1
+
+
+class _FakeSimProvider:
+    """小型历史数据的 fake provider，供模拟测试离线使用。"""
+
+    def __init__(self):
+        import pandas as pd
+        dates = pd.to_datetime(["2026-01-05", "2026-02-02", "2026-03-02"])
+        self.index = pd.DataFrame({"date": dates,
+                                   "close": [4000.0, 4100.0, 4200.0]})
+        self.val = pd.DataFrame({"date": dates,
+                                 "pe": [13.0, 13.5, 14.0], "pb": [1.4, 1.4, 1.5]})
+        self.bond = pd.DataFrame({"date": dates, "cn_10y": [2.5, 2.5, 2.6]})
+        self.quotes = pd.DataFrame({"name": ["医疗服务"], "pct_change": [2.0]})
+        self.hist = {"医疗服务": pd.DataFrame(
+            {"date": dates, "close": [100.0, 105.0, 110.0]})}
+
+    def index_daily(self, symbol="沪深300"):
+        return self.index
+
+    def index_valuation(self, name):
+        return self.val
+
+    def bond_yield(self):
+        return self.bond
+
+    def sector_quote(self):
+        return self.quotes
+
+    def sector_flow(self):
+        return pd.DataFrame()
+
+    def sector_hist(self, name):
+        return self.hist.get(name, pd.DataFrame())
+
+    def benchmark_index_code(self):
+        return "sh000300"
+
+    def etf_close(self, code6):
+        import pandas as pd
+        return pd.DataFrame({
+            "date": pd.to_datetime(["2026-01-05", "2026-02-02", "2026-03-02"]),
+            "close": [3.9, 4.0, 4.1],
+        })
