@@ -165,7 +165,11 @@ DEEPSEEK_API_KEY=test .venv/Scripts/python.exe -m pytest -v
 
 ## 7. 常见坑与注意（改代码前必读）
 
-1. **akshare 接口名随版本变化**：`core/data.py` 里硬编码了 12 个 akshare 接口（`stock_zh_index_daily`、`stock_index_pe_lg`、`stock_board_industry_name_em`、`stock_sector_fund_flow_rank`、`stock_board_industry_hist_em`、`stock_zh_a_spot_em`、`fund_etf_spot_em`、`stock_zh_a_hist`、`stock_a_indicator_lg`、`bond_china_yield`、`stock_news_em`、`stock_notice_report`）。升级 akshare 或报"接口不存在"时，**先用 `dir(ak)` 确认新接口名/新列名，再改代码**，别硬编码已废弃的接口。每个接口的返回列名也做了 `.rename(...)`，新版本列名变了会静默返回空数据（`status=missing`），此时看板会显示数据不足，不是崩溃。
+1. **akshare 接口名随版本变化**：`core/data.py` 硬编码了多个 akshare 接口。**当前锁定版本为 `akshare>=1.18.84`**（升级到 1.18 后 `stock_a_indicator_lg` 被移除，`stock_index_pe_lg` 返回中文列名且不再含 `pb`）。升级 akshare 或报"接口不存在"时，**先用 `dir(ak)` 确认新接口名/新列名，再改代码**，别硬编码已废弃的接口。已知适配（`core/data.py`）：
+   - 指数估值：`stock_index_pe_lg`（PE）+ `stock_index_pb_lg`（PB）合并为 `date/pe/pb`（`_merge_pe_pb`）
+   - 个股财务：`stock_value_em`（东财，PE/PB）优先、`stock_zh_valuation_baidu`（百度，仅 PE）回退（`_extract_financial`）
+   - 个股行情：`stock_zh_a_spot_em`（东财）优先、`stock_zh_a_spot`（新浪）回退（`_normalize_spot` 统一去 `sh/sz/bj` 前缀为 6 位 code）
+   - 抓取统一走 `_cached`：重试 3 次 + 指数退避（0.5s/1s/2s）。每个接口返回列名也做了 `.rename(...)`，新版本列名变了会静默返回空数据（`status=missing`），此时看板会显示数据不足，不是崩溃。
 2. **`.env` 不入库；`data/` 不入库**（`.gitignore` 已覆盖）。**绝不要把 `DEEPSEEK_API_KEY` 提交进 git**，也绝不提交 `data/app.db`。
 3. **`data/app.db` 是运行时状态的唯一来源**，包含：数据缓存 `cache`、虚拟账户 `account`、持仓 `positions`、交易 `trades`、净值快照 `snapshots`、阶段历史 `periods`、回测迭代历史 `iter_history`、新闻 `news`、RAG 向量块 `rag_chunks`。**删除 `data/app.db` 即重置全部运行状态**（账户归零、缓存清空、迭代历史消失）。
 4. **虚拟账户当前净值用成本价，快照曲线用市价**：`SimAccount.period_stats()` 里 `nav = cash + Σ qty × cost_price`（持仓按**成本价**估值）；而 `snapshot()` 里 `holdings_value` 用 `prices.get(symbol, cost_price)`（**优先市价**，缺价才回落成本价）。因此"当前净值"和"资金曲线最新点"口径不同，是**有意设计**，别"顺手改统一"。改它会破坏 `tests/test_account.py` 的回归断言。

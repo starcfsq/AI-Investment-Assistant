@@ -1,5 +1,7 @@
 """akshare 数据封装。所有方法可离线降级：缓存命中优先，网络失败返回空数据。"""
 import json
+import re
+import time
 from datetime import datetime, timedelta
 from typing import Any, Callable
 
@@ -9,6 +11,10 @@ from core.logging import get_logger
 from core.store import Store
 
 logger = get_logger("core.data")
+
+# 抓取重试：3 次 + 指数退避（0.5s → 1s → 2s），应对瞬时网络抖动/接口限流
+_FETCH_RETRIES = 3
+_FETCH_BACKOFF_BASE = 0.5
 
 _INDEX_CODES = {
     "上证指数": "sh000001",
@@ -45,17 +51,27 @@ class DataProvider:
                 self._record_freshness(key, "cached", _data_until(cached_data), ttl)
                 return cached_data
         status = "ok"
-        try:
-            data = fetch()
-        except Exception as exc:  # noqa: BLE001
-            logger.warning("akshare 调用失败 %s: %s，重试一次", key, exc)
+        data = None
+        last_exc = None
+        for attempt in range(1, _FETCH_RETRIES + 1):
             try:
                 data = fetch()
-                status = "ok_retry"
-            except Exception as exc2:  # noqa: BLE001
-                logger.error("akshare 重试仍失败 %s: %s", key, exc2)
-                self._record_freshness(key, "missing", None, ttl)
-                return _empty_like(key)
+                break
+            except Exception as exc:  # noqa: BLE001
+                last_exc = exc
+                if attempt < _FETCH_RETRIES:
+                    delay = _FETCH_BACKOFF_BASE * (2 ** (attempt - 1))
+                    logger.warning(
+                        "akshare 调用失败 %s（第 %d/%d 次）: %s，%.1fs 后重试",
+                        key, attempt, _FETCH_RETRIES, exc, delay,
+                    )
+                    time.sleep(delay)
+        if data is None:
+            logger.error("akshare 获取失败 %s: %s", key, last_exc)
+            self._record_freshness(key, "missing", None, ttl)
+            return _empty_like(key)
+        if last_exc is not None:
+            status = "ok_retry"
         data = _validate_df(data, key)
         if self.store and data is not None:
             self.store.cache_set(key, _to_json(data), ttl)
@@ -79,9 +95,13 @@ class DataProvider:
         import akshare as ak
 
         def fetch():
-            # 乐咕乐股指数 PE/PB 历史
-            df = ak.stock_index_pe_lg(symbol=name)
-            return df[["date", "pe", "pb"]].copy()
+            # 乐咕乐股 PE/PB 历史分两张表返回（新版列名为中文），合并为 date/pe/pb
+            pe = ak.stock_index_pe_lg(symbol=name)
+            pb = ak.stock_index_pb_lg(symbol=name)
+            out = _merge_pe_pb(pe, pb)
+            if out.empty:
+                raise RuntimeError("估值数据列为空或缺少 PE/PB")
+            return out
 
         return self._cached(f"index_valuation:{name}", 3600 * 12, fetch)
 
@@ -129,11 +149,18 @@ class DataProvider:
         import akshare as ak
 
         def fetch():
-            df = ak.stock_zh_a_spot_em()
-            return df.rename(
-                columns={"代码": "code", "名称": "name",
-                         "最新价": "price", "涨跌幅": "pct_change"}
-            )[["code", "name", "price", "pct_change"]].copy()
+            # 多源回退：东财优先，失败自动切新浪，降低限流/断连导致的获取失败
+            errors = []
+            for source, fn in (("东财", ak.stock_zh_a_spot_em),
+                               ("新浪", ak.stock_zh_a_spot)):
+                try:
+                    out = _normalize_spot(fn())
+                    if out is not None:
+                        return out
+                    errors.append(f"{source}: 列结构异常")
+                except Exception as exc:  # noqa: BLE001
+                    errors.append(f"{source}: {exc}")
+            raise RuntimeError("行情源均不可用: " + "; ".join(errors))
 
         return self._cached("stock_spot", 3600, fetch)
 
@@ -165,18 +192,18 @@ class DataProvider:
         import akshare as ak
 
         def fetch():
-            df = ak.stock_a_indicator_lg(symbol=code)
-            if df is None or df.empty:
-                return {}
-            last = df.iloc[-1]
-            return {
-                "code": code,
-                "pe": _num(last.get("pe")),
-                "pb": _num(last.get("pb")),
-                "dividend": _num(last.get("dv_ratio")),
-                "roe": 0.0,
-                "growth": 0.0,
-            }
+            # 东财 stock_value_em 优先（含 PE/PB），失败回退百度估值（仅 PE）
+            code6 = _clean_code(code)
+            try:
+                return _extract_financial(
+                    code6, ak.stock_value_em(symbol=code6), "em"
+                )
+            except Exception as exc:  # noqa: BLE001
+                logger.warning("stock_value_em 失败 %s，回退百度: %s", code6, exc)
+            df = ak.stock_zh_valuation_baidu(
+                symbol=code6, indicator="市盈率(TTM)", period="近一年"
+            )
+            return _extract_financial(code6, df, "baidu")
 
         return self._cached(f"stock_financial:{code}", 3600 * 12, fetch)
 
@@ -238,6 +265,75 @@ class DataProvider:
 
     def benchmark_index_code(self) -> str:
         return "sh000300"
+
+
+def _merge_pe_pb(pe_df: pd.DataFrame, pb_df: pd.DataFrame) -> pd.DataFrame:
+    """把乐咕 PE/PB 两张表（新版中文列名）合并为 date/pe/pb。
+
+    PE 列优先取「静态市盈率」，缺失时回退「滚动市盈率」；
+    缺关键列返回空 DataFrame，由调用方决定是否降级。
+    """
+    pe_col = "静态市盈率" if "静态市盈率" in pe_df.columns else "滚动市盈率"
+    if ("日期" not in pe_df.columns or pe_col not in pe_df.columns
+            or "日期" not in pb_df.columns or "市净率" not in pb_df.columns):
+        return pd.DataFrame(columns=["date", "pe", "pb"])
+    pe = pe_df[["日期", pe_col]].rename(columns={"日期": "date", pe_col: "pe"})
+    pb = pb_df[["日期", "市净率"]].rename(columns={"日期": "date", "市净率": "pb"})
+    return pe.merge(pb, on="date").copy()
+
+
+def _clean_code(code: Any) -> str:
+    """归一化个股代码：去 sh/sz/bj 市场前缀、去浮点尾巴、补零到 6 位。
+
+    兼容东财(纯数字)/新浪(带前缀)两种源的 code 表示，供 stock_financial 使用。
+    """
+    s = str(code).strip()
+    s = re.sub(r"^(sh|sz|bj)", "", s, flags=re.IGNORECASE)
+    s = re.sub(r"\.0$", "", s)
+    return s.zfill(6)
+
+
+def _extract_financial(code: str, df: pd.DataFrame, source: str) -> dict:
+    """从行情/估值表提取选股所需字段。source: em(东财 stock_value_em) / baidu(百度)。
+
+    roe/growth 上游无数据源时诚实置 0（不影响数据真实性原则）；空表返回 {}。
+    """
+    if df is None or df.empty:
+        return {}
+    last = df.iloc[-1]
+    if source == "em":
+        return {
+            "code": code,
+            "pe": _num(last.get("PE(TTM)") or last.get("PE(静)")),
+            "pb": _num(last.get("市净率")),
+            "dividend": 0.0, "roe": 0.0, "growth": 0.0,
+        }
+    return {
+        "code": code,
+        "pe": _num(last.get("value")),
+        "pb": 0.0,
+        "dividend": 0.0, "roe": 0.0, "growth": 0.0,
+    }
+
+
+def _normalize_spot(df: pd.DataFrame) -> pd.DataFrame | None:
+    """行情多源归一化：中文列 → code/name/price/pct_change。
+
+    缺关键列或空数据返回 None（触发多源回退），而非抛 KeyError。
+    code 统一为 6 位数字字符串（兼容东财/新浪的 int/float/str 表示）。
+    """
+    cols = {"代码": "code", "名称": "name", "最新价": "price", "涨跌幅": "pct_change"}
+    if df is None or df.empty or not all(c in df.columns for c in cols):
+        return None
+    out = df.rename(columns=cols)[["code", "name", "price", "pct_change"]].copy()
+    # 新浪源带市场前缀(sh/sz/bj)，东财源为纯数字；统一为 6 位数字字符串
+    out["code"] = (
+        out["code"].astype(str)
+        .str.replace(r"^(sh|sz|bj)", "", regex=True)
+        .str.replace(r"\.0$", "", regex=True)
+        .str.zfill(6)
+    )
+    return out
 
 
 def _num(v: Any) -> float:
