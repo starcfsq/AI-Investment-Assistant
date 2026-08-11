@@ -75,13 +75,15 @@ def run_analysis(provider) -> dict:
         "quotes": quotes, "flow": flow, "hist": hist, "bench": bench,
     }, weights)
     stocks = _rank_stocks(spot, base["sectors"], provider, weights)
+    warnings = _sufficiency_warnings(index_df, val_df, quotes,
+                                     base["sectors"], stocks)
     data_until = base["trend"].get("data_until",
                                    datetime.now().strftime("%Y-%m-%d"))
     return {
         "generated_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
         "trend": base["trend"], "sectors": base["sectors"], "stocks": stocks,
         "portfolio": base["portfolio"], "data_until": data_until,
-        "data_quality": provider.quality_report(), "warnings": base["warnings"],
+        "data_quality": provider.quality_report(), "warnings": warnings,
     }
 
 
