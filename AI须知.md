@@ -169,6 +169,8 @@ DEEPSEEK_API_KEY=test .venv/Scripts/python.exe -m pytest -v
    - 指数估值：`stock_index_pe_lg`（PE）+ `stock_index_pb_lg`（PB）合并为 `date/pe/pb`（`_merge_pe_pb`）
    - 个股财务：`stock_value_em`（东财，PE/PB）优先、`stock_zh_valuation_baidu`（百度，仅 PE）回退（`_extract_financial`）
    - 个股行情：`stock_zh_a_spot_em`（东财）优先、`stock_zh_a_spot`（新浪）回退（`_normalize_spot` 统一去 `sh/sz/bj` 前缀为 6 位 code）
+   - 板块行情/资金流：东财 `stock_board_industry_name_em`/`stock_sector_fund_flow_rank` 优先，失败回退同花顺 `stock_board_industry_summary_ths`（板块/涨跌幅/净流入）
+   - 板块K线：东财 `stock_board_industry_hist_em` 优先，失败回退同花顺 `stock_board_industry_index_ths`（日期/收盘价）；`DataProvider` 带**熔断**（东财板块历史连续失败 2 次后直接走同花顺，避免循环等待超时）
    - 抓取统一走 `_cached`：重试 3 次 + 指数退避（0.5s/1s/2s）。每个接口返回列名也做了 `.rename(...)`，新版本列名变了会静默返回空数据（`status=missing`），此时看板会显示数据不足，不是崩溃。
 2. **`.env` 不入库；`data/` 不入库**（`.gitignore` 已覆盖）。**绝不要把 `DEEPSEEK_API_KEY` 提交进 git**，也绝不提交 `data/app.db`。
 3. **`data/app.db` 是运行时状态的唯一来源**，包含：数据缓存 `cache`、虚拟账户 `account`、持仓 `positions`、交易 `trades`、净值快照 `snapshots`、阶段历史 `periods`、回测迭代历史 `iter_history`、新闻 `news`、RAG 向量块 `rag_chunks`。**删除 `data/app.db` 即重置全部运行状态**（账户归零、缓存清空、迭代历史消失）。

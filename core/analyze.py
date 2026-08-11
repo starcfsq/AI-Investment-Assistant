@@ -1,6 +1,8 @@
 """把数据与各分析模块串成一次完整分析。"""
 from datetime import datetime
 
+import pandas as pd
+
 from core.config import load_weights
 from core.logging import get_logger
 from core.portfolio import build_portfolio
@@ -46,8 +48,7 @@ def run_analysis(provider) -> dict:
         if not spot.empty and sectors:
             top_names = [s["name"] for s in sectors[:5]]
             candidates = []
-            # 简化：从沪深300成分股中按板块名模糊匹配
-            pool = spot[spot["name"].str.contains("|".join(top_names), regex=True, na=False)]
+            pool = _candidate_pool(spot, top_names)
             for _, row in pool.head(20).iterrows():
                 fin = provider.stock_financial(row["code"])
                 if fin.get("pe"):
@@ -75,6 +76,18 @@ def run_analysis(provider) -> dict:
         "data_quality": provider.quality_report(),
         "warnings": warnings,
     }
+
+
+def _candidate_pool(spot: pd.DataFrame, top_names: list[str]) -> pd.DataFrame:
+    """从行情池生成选股候选。
+
+    优先按 top 板块名模糊匹配股票名；板块名与股票名通常不直接对应，
+    匹配失败时回退为全市场活跃候选（按涨跌幅降序取前 30），保证选股功能可用。
+    """
+    pool = spot[spot["name"].str.contains("|".join(top_names), regex=True, na=False)]
+    if pool.empty and "pct_change" in spot.columns:
+        pool = spot.sort_values("pct_change", ascending=False).head(30)
+    return pool
 
 
 def _sufficiency_warnings(index_df, val_df, quotes, sectors, stocks) -> list[str]:

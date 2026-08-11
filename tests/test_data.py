@@ -2,7 +2,15 @@
 import pandas as pd
 import pytest
 
-from core.data import _clean_code, _extract_financial, _merge_pe_pb, _normalize_spot
+from core.data import (
+    _clean_code,
+    _extract_financial,
+    _merge_pe_pb,
+    _normalize_sector_flow,
+    _normalize_sector_hist,
+    _normalize_sector_quote,
+    _normalize_spot,
+)
 
 
 def test_merge_pe_pb_combines_date_pe_pb():
@@ -82,3 +90,50 @@ def test_clean_code_normalizes_prefix_and_padding():
     assert _clean_code("601212") == "601212"
     assert _clean_code("600000.0") == "600000"  # 浮点字符串
     assert _clean_code(1) == "000001"           # int 补零
+
+
+def test_normalize_sector_quote_em():
+    df = pd.DataFrame({"板块名称": ["医疗服务"], "涨跌幅": [2.5]})
+    out = _normalize_sector_quote(df, "em")
+    assert out["name"].tolist() == ["医疗服务"]
+    assert out["pct_change"].tolist() == [2.5]
+
+
+def test_normalize_sector_quote_ths():
+    df = pd.DataFrame({"板块": ["贵金属"], "涨跌幅": [-5.03]})
+    out = _normalize_sector_quote(df, "ths")
+    assert out["name"].tolist() == ["贵金属"]
+    assert out["pct_change"].tolist() == [-5.03]
+
+
+def test_normalize_sector_flow_em():
+    df = pd.DataFrame({"名称": ["医疗服务"], "主力净流入-净额": [123.5]})
+    out = _normalize_sector_flow(df, "em")
+    assert out["name"].tolist() == ["医疗服务"]
+    assert out["net_inflow"].tolist() == [123.5]
+
+
+def test_normalize_sector_flow_ths():
+    df = pd.DataFrame({"板块": ["贵金属"], "净流入": [-48.37]})
+    out = _normalize_sector_flow(df, "ths")
+    assert out["name"].tolist() == ["贵金属"]
+    assert out["net_inflow"].tolist() == [-48.37]
+
+
+def test_normalize_sector_hist_em():
+    df = pd.DataFrame({"日期": ["2026-08-10"], "收盘": [100.0]})
+    out = _normalize_sector_hist(df, "em")
+    assert list(out.columns) == ["date", "close"]
+
+
+def test_normalize_sector_hist_ths():
+    df = pd.DataFrame({"日期": ["2026-08-10"], "收盘价": [20554.083]})
+    out = _normalize_sector_hist(df, "ths")
+    assert list(out.columns) == ["date", "close"]
+    assert out["close"].tolist() == [20554.083]
+
+
+def test_normalize_sector_missing_column_returns_none():
+    assert _normalize_sector_quote(pd.DataFrame({"板块": ["贵金属"]}), "em") is None
+    assert _normalize_sector_flow(pd.DataFrame({"板块": ["贵金属"]}), "em") is None
+    assert _normalize_sector_hist(pd.DataFrame({"日期": ["x"]}), "em") is None

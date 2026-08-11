@@ -29,6 +29,9 @@ class DataProvider:
     def __init__(self, store: Store | None = None):
         self.store = store or Store(":memory:")
         self._freshness: dict[str, dict] = {}
+        # 板块历史熔断：东财连续失败后直接走同花顺，避免每个板块反复等待东财超时
+        self._em_sector_hist_failures = 0
+        self._sector_hist_fallback = False
 
     def _record_freshness(self, key: str, status: str,
                           data_until: str | None, ttl: int) -> None:
@@ -110,10 +113,24 @@ class DataProvider:
         import akshare as ak
 
         def fetch():
-            df = ak.stock_board_industry_name_em()
-            return df.rename(
-                columns={"板块名称": "name", "涨跌幅": "pct_change"}
-            )[["name", "pct_change"]].copy()
+            # 东财优先，失败回退同花顺板块汇总
+            errors = []
+            try:
+                out = _normalize_sector_quote(ak.stock_board_industry_name_em(), "em")
+                if out is not None:
+                    return out
+                errors.append("东财: 列结构异常")
+            except Exception as exc:  # noqa: BLE001
+                errors.append(f"东财: {exc}")
+            try:
+                out = _normalize_sector_quote(
+                    ak.stock_board_industry_summary_ths(), "ths"
+                )
+                if out is not None:
+                    return out
+            except Exception as exc:  # noqa: BLE001
+                errors.append(f"同花顺: {exc}")
+            raise RuntimeError("板块行情源均不可用: " + "; ".join(errors))
 
         return self._cached("sector_quote", 3600 * 4, fetch)
 
@@ -121,12 +138,28 @@ class DataProvider:
         import akshare as ak
 
         def fetch():
-            df = ak.stock_sector_fund_flow_rank(
-                indicator="今日", sector_type="行业资金流"
-            )
-            return df.rename(
-                columns={"名称": "name", "主力净流入-净额": "net_inflow"}
-            )[["name", "net_inflow"]].copy()
+            # 东财优先，失败回退同花顺板块汇总（净流入）
+            errors = []
+            try:
+                out = _normalize_sector_flow(
+                    ak.stock_sector_fund_flow_rank(
+                        indicator="今日", sector_type="行业资金流"
+                    ), "em",
+                )
+                if out is not None:
+                    return out
+                errors.append("东财: 列结构异常")
+            except Exception as exc:  # noqa: BLE001
+                errors.append(f"东财: {exc}")
+            try:
+                out = _normalize_sector_flow(
+                    ak.stock_board_industry_summary_ths(), "ths"
+                )
+                if out is not None:
+                    return out
+            except Exception as exc:  # noqa: BLE001
+                errors.append(f"同花顺: {exc}")
+            raise RuntimeError("板块资金流源均不可用: " + "; ".join(errors))
 
         return self._cached("sector_flow", 3600 * 4, fetch)
 
@@ -134,13 +167,36 @@ class DataProvider:
         import akshare as ak
 
         def fetch():
-            df = ak.stock_board_industry_hist_em(
-                symbol=name, period="日k",
-                start_date="20200101",
-                end_date=datetime.now().strftime("%Y%m%d"),
-                adjust="",
+            # 东财优先；熔断开启或东财连续失败后直接走同花顺行业指数 K 线
+            if not self._sector_hist_fallback:
+                try:
+                    out = _normalize_sector_hist(
+                        ak.stock_board_industry_hist_em(
+                            symbol=name, period="日k",
+                            start_date="20200101",
+                            end_date=datetime.now().strftime("%Y%m%d"),
+                            adjust="",
+                        ), "em",
+                    )
+                    if out is not None:
+                        self._em_sector_hist_failures = 0
+                        return out
+                except Exception as exc:  # noqa: BLE001
+                    self._em_sector_hist_failures += 1
+                    logger.warning("板块历史东财失败 %s（第 %d 次），回退同花顺: %s",
+                                   name, self._em_sector_hist_failures, exc)
+                    if self._em_sector_hist_failures >= 2:
+                        self._sector_hist_fallback = True
+                        logger.warning("板块历史东财熔断，后续直接使用同花顺")
+            out = _normalize_sector_hist(
+                ak.stock_board_industry_index_ths(
+                    symbol=name, start_date="20200101",
+                    end_date=datetime.now().strftime("%Y%m%d"),
+                ), "ths",
             )
-            return df.rename(columns={"日期": "date", "收盘": "close"})[["date", "close"]].copy()
+            if out is None:
+                raise RuntimeError("板块历史源均不可用")
+            return out
 
         return self._cached(f"sector_hist:{name}", 3600 * 6, fetch)
 
@@ -334,6 +390,51 @@ def _normalize_spot(df: pd.DataFrame) -> pd.DataFrame | None:
         .str.zfill(6)
     )
     return out
+
+
+def _normalize_sector_quote(df: pd.DataFrame, source: str) -> pd.DataFrame | None:
+    """板块行情归一化为 name/pct_change。source: em(东财) / ths(同花顺汇总)。"""
+    if df is None or df.empty:
+        return None
+    if source == "em":
+        if "板块名称" not in df.columns or "涨跌幅" not in df.columns:
+            return None
+        return df.rename(columns={"板块名称": "name", "涨跌幅": "pct_change"})[
+            ["name", "pct_change"]].copy()
+    if "板块" not in df.columns or "涨跌幅" not in df.columns:
+        return None
+    return df.rename(columns={"板块": "name", "涨跌幅": "pct_change"})[
+        ["name", "pct_change"]].copy()
+
+
+def _normalize_sector_flow(df: pd.DataFrame, source: str) -> pd.DataFrame | None:
+    """板块资金流归一化为 name/net_inflow。source: em(东财) / ths(同花顺汇总)。"""
+    if df is None or df.empty:
+        return None
+    if source == "em":
+        if "名称" not in df.columns or "主力净流入-净额" not in df.columns:
+            return None
+        return df.rename(columns={"名称": "name", "主力净流入-净额": "net_inflow"})[
+            ["name", "net_inflow"]].copy()
+    if "板块" not in df.columns or "净流入" not in df.columns:
+        return None
+    return df.rename(columns={"板块": "name", "净流入": "net_inflow"})[
+        ["name", "net_inflow"]].copy()
+
+
+def _normalize_sector_hist(df: pd.DataFrame, source: str) -> pd.DataFrame | None:
+    """板块K线归一化为 date/close。source: em(东财) / ths(同花顺行业指数)。"""
+    if df is None or df.empty:
+        return None
+    if source == "em":
+        if "日期" not in df.columns or "收盘" not in df.columns:
+            return None
+        return df.rename(columns={"日期": "date", "收盘": "close"})[
+            ["date", "close"]].copy()
+    if "日期" not in df.columns or "收盘价" not in df.columns:
+        return None
+    return df.rename(columns={"日期": "date", "收盘价": "close"})[
+        ["date", "close"]].copy()
 
 
 def _num(v: Any) -> float:
